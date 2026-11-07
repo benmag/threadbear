@@ -186,10 +186,14 @@ class CursorSession implements AgentSession {
     const proc = (this.deps.spawn ?? defaultSpawn)(bin, ['acp'], { cwd: this.opts.cwd, env });
     this.proc = proc;
     if (!this.deps.spawn && proc.pid) this.deps.registry?.add(proc.pid, bin);
-    this.conn = new AcpConnection(proc, {
-      notification: (method, params) => this.onNotification(method, params),
-      request: (id, method, params) => this.onRequest(id, method, params),
-    });
+    this.conn = new AcpConnection(
+      proc,
+      {
+        notification: (method, params) => this.onNotification(method, params),
+        request: (id, method, params) => this.onRequest(id, method, params),
+      },
+      { label: 'Cursor ACP' },
+    );
     proc.stderr?.on('data', (chunk: Buffer | string) => this.deps.log?.debug('cursor acp', { text: String(chunk).slice(0, 500) }));
     proc.on('exit', () => {
       if (this.proc?.pid && !this.deps.spawn) this.deps.registry?.remove(this.proc.pid);

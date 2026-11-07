@@ -118,6 +118,7 @@ export const poolsPart = {
     if (isClaudeModel(model)) return 'claude';
     const accounts = this.safeAccounts();
     const listed = (p: Provider) => accounts.some((a) => a.provider === p && modelRow(a, model));
+    if (listed('opencode') && !listed('codex') && !listed('cursor') && model.includes('/')) return 'opencode';
     if (listed('cursor') && !listed('codex')) return 'cursor';
     if (model.startsWith('gpt-') || listed('codex')) {
       // A gpt- id with no Codex login is Cursor's when Cursor is the only
@@ -127,6 +128,7 @@ export const poolsPart = {
     }
     if (listed('claude')) return 'claude';
     if (listed('cursor')) return 'cursor';
+    if (listed('opencode')) return 'opencode';
     return undefined;
   },
 

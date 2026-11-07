@@ -36,6 +36,8 @@ import { Runner, missingCliBanner } from './runner.ts';
 import { CodexAdapter } from './adapters/codex/adapter.ts';
 import { CursorAdapter } from './adapters/cursor/adapter.ts';
 import { findCursorBinary } from './adapters/cursor/cli.ts';
+import { OpenCodeAdapter } from './adapters/opencode/adapter.ts';
+import { findOpenCodeBinary } from './adapters/opencode/cli.ts';
 import { resolveCodexBinary } from './adapters/codex/appserver.ts';
 import { checkSurface, testedVersion } from './adapters/codex/surface.ts';
 import { CliUpdates } from './updates/manager.ts';
@@ -244,6 +246,32 @@ async function main(): Promise<void> {
     toolsFor: cursorTools,
     guidance: cursorGuidance,
   });
+  const opencodeTools = (threadId: string) =>
+    buildThreadbearTools(router(), threadId, Date.now, scheduleControl(), projectControl(), appRestarts, {
+      provider: 'opencode',
+      bulletReplies: () => cfg.bulletReplies,
+      oneReply: () => cfg.oneReply,
+      pocket: pocketControl,
+      gateway: () => cfg.connectorsUrl,
+      gatewayHealth,
+      scheduleChecks: () => experimentOn(cfg.home, 'scheduleChecks'),
+      remote: remoteControl,
+    });
+  const opencodeGuidance = (threadId: string) =>
+    serverInstructions(threadId, {
+      one: cfg.oneReply,
+      bulletReplies: cfg.bulletReplies,
+      pocket: Boolean(pocketControl?.()),
+      projects: true,
+      richBlocks: experimentOn(cfg.home, 'richBlocks'),
+    });
+  const opencode = new OpenCodeAdapter({
+    binary: () => findOpenCodeBinary({ explicit: cfg.opencodePath }),
+    registry,
+    log,
+    toolsFor: opencodeTools,
+    guidance: opencodeGuidance,
+  });
   // The runner's own small-model calls, on the settings' pool (Claude, or
   // Cursor when that is the only login).
   const models = new Models({
@@ -253,6 +281,7 @@ async function main(): Promise<void> {
     settings: () => cfg.models,
     claudePath: cfg.claudePath,
     cursorBin: () => findCursorBinary({ explicit: cfg.cursorPath }),
+    opencodeBin: () => findOpenCodeBinary({ explicit: cfg.opencodePath }),
     registry,
     poolHost: { pool: (id) => runner.smallModelPool(id), ranDry: (id) => runner.noteRanDry(id) },
   });
@@ -266,7 +295,7 @@ async function main(): Promise<void> {
     atMac: () => atMac,
     config: cfg,
     store,
-    adapters: { claude, codex, cursor },
+    adapters: { claude, codex, cursor, opencode },
     accounts,
     // A draining runner's readings go to the primary, which owns
     // usage.json (docs/protocol.md, "Handovers").

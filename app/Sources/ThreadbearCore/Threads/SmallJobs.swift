@@ -7,7 +7,7 @@ public enum SmallJobs {
     public static func pools(_ pools: [Pool], accounts: [Account]) -> [Pool] {
         pools.filter { pool in
             pool.accountIds.contains { id in
-                accounts.contains { $0.id == id && ($0.provider == "claude" || $0.provider == "cursor") }
+                accounts.contains { $0.id == id && ($0.provider == "claude" || $0.provider == "cursor" || $0.provider == "opencode") }
             }
         }
     }
@@ -17,6 +17,7 @@ public enum SmallJobs {
     public static func shownPool(stored: String?, pools: [Pool]) -> String? {
         if let stored, pools.contains(where: { $0.id == stored }) { return stored }
         if stored == "claude", pools.contains(where: { $0.id == "cursor" }) { return "cursor" }
+        if stored == "claude", pools.contains(where: { $0.id == "opencode" }) { return "opencode" }
         return stored
     }
 }

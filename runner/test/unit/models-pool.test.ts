@@ -145,7 +145,7 @@ test('pool: a login that fails some other way says so, and is not counted as run
 test('pool: null, a pool that is gone or one with no Claude login says no-pool, and unavailable() says so', async () => {
   for (const pool of [null, 'nope', 'codex-only']) {
     const s = setup({ pool, pools: [{ id: 'claude', title: 'Claude', accountIds: ['claude-main'] }, { id: 'codex-only', title: 'Codex', accountIds: ['codex-main'] }] });
-    assert.equal(s.models.unavailable(), 'Needs a Claude or Cursor pool to run on', String(pool));
+    assert.equal(s.models.unavailable(), 'Needs a Claude, Cursor or OpenCode pool to run on', String(pool));
     const r = await s.models.generate({ feature: 'titles', prompt: 'a' });
     assert.equal(r.ok ? 'sent' : r.reason, 'no-pool', String(pool));
     assert.equal(s.cli.length, 0);

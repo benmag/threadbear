@@ -165,8 +165,13 @@ function checkMac() {
   const claude = fs.existsSync(path.join(os.homedir(), '.local', 'bin', 'claude')) || has('claude');
   const codex = has('codex');
   const cursor = fs.existsSync(path.join(os.homedir(), '.local', 'bin', 'cursor-agent')) || fs.existsSync(path.join(os.homedir(), '.local', 'bin', 'agent')) || has('cursor-agent');
-  if (!claude && !codex && !cursor) throw new Fail('Neither Claude Code, Codex nor the Cursor CLI is installed. Install one and log in first: https://claude.com/claude-code, https://developers.openai.com/codex or https://cursor.com/docs/cli');
-  ok([claude && 'Claude Code', codex && 'Codex', cursor && 'Cursor'].filter(Boolean).join(' and '));
+  const opencode =
+    fs.existsSync(path.join(os.homedir(), '.opencode', 'bin', 'opencode')) || fs.existsSync(path.join(os.homedir(), '.local', 'bin', 'opencode')) || has('opencode');
+  if (!claude && !codex && !cursor && !opencode)
+    throw new Fail(
+      'Neither Claude Code, Codex, Cursor nor OpenCode is installed. Install one and log in first: https://claude.com/claude-code, https://developers.openai.com/codex, https://cursor.com/docs/cli or https://opencode.ai/docs',
+    );
+  ok([claude && 'Claude Code', codex && 'Codex', cursor && 'Cursor', opencode && 'OpenCode'].filter(Boolean).join(' and '));
   // The runner is a login agent, which macOS only loads for someone logged in
   // to the desktop: over SSH to a Mac nobody's logged in to, step 8 can't
   // finish (seen on Tinker Desk, 28 Oct).

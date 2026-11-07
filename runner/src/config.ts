@@ -34,10 +34,11 @@ export type CliUpdatesConfig = {
   claude: CliPolicy;
   codex: CliPolicy;
   cursor: CliPolicy;
+  opencode: CliPolicy;
   checkMinutes: number;
   keepCodexVersions: number; // Codex copies kept under <home>/tools/codex
 };
-export const DEFAULT_CLI_UPDATES: CliUpdatesConfig = { claude: 'auto', codex: 'auto', cursor: 'auto', checkMinutes: 60, keepCodexVersions: 2 };
+export const DEFAULT_CLI_UPDATES: CliUpdatesConfig = { claude: 'auto', codex: 'auto', cursor: 'auto', opencode: 'auto', checkMinutes: 60, keepCodexVersions: 2 };
 
 // Everything that differs between the real install and a test lives here, so
 // tests can point THREADBEAR_HOME and THREADBEAR_PORT somewhere harmless and
@@ -80,6 +81,8 @@ export type Config = {
   // A Cursor CLI set by hand (`agent` / `cursor-agent`). Unset: look up
   // ~/.local/bin/cursor-agent, ~/.local/bin/agent, then PATH.
   cursorPath?: string;
+  // OpenCode CLI set by hand. Unset: ~/.opencode/bin/opencode, ~/.local/bin/opencode, PATH.
+  opencodePath?: string;
   codexArgs: string[]; // extra `codex app-server` arguments
   codexMainDir: string; // codex-main's CODEX_HOME
   tokenStatsLimitsFile: string; // Token Stats' limits.json, read only
@@ -112,7 +115,7 @@ export type Config = {
   // The runner's own model calls (src/models/): the pool whose Claude
   // logins answer them (null: none, so no small jobs) and folders whose
   // threads are never sent.
-  models: { pool: string | null; privateFolders: string[]; cursorModel?: string };
+  models: { pool: string | null; privateFolders: string[]; cursorModel?: string; opencodeModel?: string };
   // The Convex mirror (src/sync.ts): the project's URL, whether it's on,
   // the name the phone shows for this runner and its id (made once).
   // THREADBEAR_SYNC=off turns it off for tests and dev runners.
@@ -149,6 +152,7 @@ export type RunnerJson = {
   maxLiveCLIs?: number;
   codexPath?: string;
   cursorPath?: string;
+  opencodePath?: string;
   codexArgs?: string[];
   cliUpdates?: Partial<CliUpdatesConfig>;
   accountNotes?: Record<string, string>;
@@ -167,7 +171,7 @@ export type RunnerJson = {
   // bringIn: how often a fork's runner starts a thread to bring in Mike's
   // releases (bring-in.ts): every so many days, 'important' or 'off'.
   releases?: { publish?: boolean; signingKey?: string; bringIn?: number | 'important' | 'off' };
-  models?: { pool?: string | null; privateFolders?: string[]; cursorModel?: string };
+  models?: { pool?: string | null; privateFolders?: string[]; cursorModel?: string; opencodeModel?: string };
   // icon: an SF Symbol for this runner in lists (machine.ts works one out).
   // rpcUrl: how a Mac app reaches this runner over the tailnet (step 6 part 2).
   // full: true sends tool output to your Convex deployment as well, scrubbed first
@@ -244,6 +248,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const maxLive = Number(env.THREADBEAR_MAX_LIVE || json.maxLiveCLIs || DEFAULT_MAX_LIVE);
   const codexPath = nonEmpty(env.THREADBEAR_CODEX_PATH) ?? nonEmpty(json.codexPath);
   const cursorPath = nonEmpty(env.THREADBEAR_CURSOR_PATH) ?? nonEmpty(json.cursorPath);
+  const opencodePath = nonEmpty(env.THREADBEAR_OPENCODE_PATH) ?? nonEmpty(json.opencodePath);
   const models = providerMap(json.defaults?.models, nonEmpty);
   const efforts = providerMap(json.defaults?.efforts, (v) => (isEffortLevel(v) ? v : undefined));
   return {
@@ -277,6 +282,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     models: modelSettingsFrom(json),
     ...(codexPath ? { codexPath: expandHome(codexPath) } : {}),
     ...(cursorPath ? { cursorPath: expandHome(cursorPath) } : {}),
+    ...(opencodePath ? { opencodePath: expandHome(opencodePath) } : {}),
     codexArgs: Array.isArray(json.codexArgs) ? json.codexArgs.filter((a): a is string => typeof a === 'string') : [],
     codexMainDir: expandHome(env.THREADBEAR_CODEX_MAIN_DIR || '~/.codex'),
     tokenStatsLimitsFile: expandHome(
@@ -364,6 +370,7 @@ function cliUpdatesConfig(raw: Partial<CliUpdatesConfig> | undefined, envValue: 
     claude: off ? 'off' : policy(raw?.claude, DEFAULT_CLI_UPDATES.claude),
     codex: off ? 'off' : policy(raw?.codex, DEFAULT_CLI_UPDATES.codex),
     cursor: off ? 'off' : policy(raw?.cursor, DEFAULT_CLI_UPDATES.cursor),
+    opencode: off ? 'off' : policy(raw?.opencode, DEFAULT_CLI_UPDATES.opencode),
     checkMinutes: count(raw?.checkMinutes, DEFAULT_CLI_UPDATES.checkMinutes, 1),
     // Fewer than 2 would leave nothing for "Go back".
     keepCodexVersions: count(raw?.keepCodexVersions, DEFAULT_CLI_UPDATES.keepCodexVersions, 2),
@@ -376,6 +383,7 @@ export function modelSettingsFrom(json: RunnerJson): Config['models'] {
   const folders = json.models?.privateFolders;
   const pool = json.models?.pool;
   const cursorModel = json.models?.cursorModel;
+  const opencodeModel = json.models?.opencodeModel;
   return {
     // Absent or not a string: the Claude pool. null is Mike saying none.
     // A Mac with no Claude login and a Cursor one still runs small jobs
@@ -383,6 +391,7 @@ export function modelSettingsFrom(json: RunnerJson): Config['models'] {
     pool: pool === null ? null : typeof pool === 'string' && pool.trim() ? pool.trim() : DEFAULT_SMALL_MODEL_POOL,
     privateFolders: Array.isArray(folders) ? folders.filter((f): f is string => typeof f === 'string' && f.trim() !== '') : [],
     ...(typeof cursorModel === 'string' && cursorModel.trim() ? { cursorModel: cursorModel.trim() } : {}),
+    ...(typeof opencodeModel === 'string' && opencodeModel.trim() ? { opencodeModel: opencodeModel.trim() } : {}),
   };
 }
 

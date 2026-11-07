@@ -174,7 +174,7 @@ export class TokenTally {
       // Cursor keeps chats in its own store. It has no Claude or Codex
       // transcript tree to tally, and walking ~/.cursor would count the
       // wrong files.
-      if (account.provider === 'cursor') continue;
+      if (account.provider === 'cursor' || account.provider === 'opencode') continue;
       const roots =
         account.provider === 'codex'
           ? [path.join(account.configDir, 'sessions'), path.join(account.configDir, 'archived_sessions')]

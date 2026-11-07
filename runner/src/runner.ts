@@ -228,6 +228,7 @@ export type AccountPicker = (accounts: Account[], lastUsedId: string | undefined
 export type AccountSource = Pick<AccountRegistry, 'list' | 'get' | 'learn'> & {
   onChange?(fn: () => void): () => void;
   noteCursor?(login: { email?: string } | null): void;
+  noteOpenCode?(login: { email?: string } | null): void;
 };
 
 // The Codex adapter reports the binaries its live processes run, so E only
@@ -638,6 +639,7 @@ export class Runner {
   accountsSentAt = -Infinity;
   accountsShown?: string; // the last list clients were sent (or got in hello's time)
   private cursorLoginAt = 0;
+  private opencodeLoginAt = 0;
   // E's last Codex status, to notice an update activating (or a first
   // copy arriving where there was none) as against E working out what's
   // installed when it starts.
@@ -754,6 +756,7 @@ export class Runner {
     this.poolsShown = JSON.stringify(this.pools());
     void this.probeModels();
     void this.refreshCursorLogin();
+    void this.refreshOpenCodeLogin();
     // Usage readings and a rescan that finds another list both reach
     // clients through the same throttle as what the probes learn.
     if (this.usage?.onChange) this.unsubs.push(this.usage.onChange(() => this.accountsChanged()));
@@ -773,6 +776,19 @@ export class Runner {
       this.accounts.noteCursor?.(login);
     } catch (e) {
       this.log.warn('could not check the Cursor login', { error: String(e) });
+    }
+  }
+
+  async refreshOpenCodeLogin(): Promise<void> {
+    const opencode = this.adapters.opencode as { login?: () => Promise<{ email?: string } | null> } | undefined;
+    if (!opencode?.login) return;
+    if (this.clock.now() - this.opencodeLoginAt < 60_000) return;
+    this.opencodeLoginAt = this.clock.now();
+    try {
+      const login = await opencode.login();
+      this.accounts.noteOpenCode?.(login);
+    } catch (e) {
+      this.log.warn('could not check the OpenCode CLI', { error: String(e) });
     }
   }
 
@@ -831,6 +847,7 @@ export class Runner {
     const fresh = new Set(list.filter((a) => !this.probed.has(a.id)).map((a) => a.id));
     if (fresh.size) void this.probeModels((a) => fresh.has(a.id));
     void this.refreshCursorLogin();
+    void this.refreshOpenCodeLogin();
     if (accountsKey(list) !== this.accountsShown) this.accountsChanged();
   }
 
@@ -3429,7 +3446,7 @@ export function oneLine(text: string, max: number): string {
 export function missingCliBanner(provider: Provider, accounts: Pick<Account, 'provider'>[]): boolean {
   const has = (p: Provider) => accounts.some((a) => a.provider === p);
   if (has(provider)) return true;
-  const other = (['claude', 'codex', 'cursor'] as const).some((p) => p !== provider && has(p));
+  const other = (['claude', 'codex', 'cursor', 'opencode'] as const).some((p) => p !== provider && has(p));
   if (other) return false;
   return provider === 'claude';
 }
@@ -3438,12 +3455,14 @@ export function missingCliBanner(provider: Provider, accounts: Pick<Account, 'pr
 export function providerName(p: Provider): string {
   if (p === 'codex') return 'Codex';
   if (p === 'cursor') return 'Cursor';
+  if (p === 'opencode') return 'OpenCode';
   return 'Claude';
 }
 
 function cliName(p: Provider): string {
   if (p === 'codex') return 'Codex';
   if (p === 'cursor') return 'Cursor';
+  if (p === 'opencode') return 'OpenCode';
   return 'Claude Code';
 }
 

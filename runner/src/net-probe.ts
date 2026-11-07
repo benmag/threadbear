@@ -19,6 +19,7 @@ const HOSTS: Record<Provider, string> = {
   codex: 'chatgpt.com',
   // `agent acp` defaults to this endpoint (`--endpoint` in `agent --help`).
   cursor: 'api2.cursor.sh',
+  opencode: 'opencode.ai',
 };
 
 const PROBE_TIMEOUT_MS = 5_000;

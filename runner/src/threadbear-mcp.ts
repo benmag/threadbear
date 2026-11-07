@@ -122,7 +122,8 @@ type Result = { content: { type: 'text'; text: string }[]; isError?: boolean };
 // model doesn't offer, with a note.
 const effortEnum = z.enum(EFFORT_LEVELS as unknown as [EffortLevel, ...EffortLevel[]]);
 
-const providerName = (a: Pick<Account, 'provider'>): string => (a.provider === 'codex' ? 'Codex' : a.provider === 'cursor' ? 'Cursor' : 'Claude');
+const providerName = (a: Pick<Account, 'provider'>): string =>
+  a.provider === 'codex' ? 'Codex' : a.provider === 'cursor' ? 'Cursor' : a.provider === 'opencode' ? 'OpenCode' : 'Claude';
 
 const ok = (text: string): Result => ({ content: [{ type: 'text', text }] });
 const fail = (text: string): Result => ({ content: [{ type: 'text', text }], isError: true });
@@ -185,7 +186,7 @@ export function buildThreadbearTools(
   // gateway service needs signing in (connectors.ts, signInSignal).
   opts: {
     sleep?: (ms: number) => Promise<void>;
-    provider?: 'claude' | 'codex' | 'cursor';
+    provider?: 'claude' | 'codex' | 'cursor' | 'opencode';
     bulletReplies?: () => boolean;
     oneReply?: () => boolean;
     pocket?: () => PocketControl | undefined;
@@ -403,7 +404,7 @@ export function buildThreadbearTools(
       `runner: ${runner} (read through Convex: messages and one line per tool call; tool output stays on that runner)`,
       `status: ${t.status}${t.needsYou ? ' (needs the user)' : ''}`,
       `folder: ${t.cwd} (on ${runner})`,
-      `account: ${t.accountId} (${t.provider === 'codex' ? 'Codex' : t.provider === 'cursor' ? 'Cursor' : 'Claude'})`,
+      `account: ${t.accountId} (${providerName(t)})`,
       `model: ${t.model ?? 'default'}`,
       t.snoozedUntil ? `snoozed until: ${t.snoozedUntil}` : '',
       t.archivedAt ? `archived: ${t.archivedAt}` : '',

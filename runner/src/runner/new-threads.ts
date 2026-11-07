@@ -268,9 +268,9 @@ export const newThreadsPart = {
   modelFits(this: Runner, account: Account, model: string): boolean {
     if (modelRow(account, model)) return true;
     if (account.provider === 'codex') return !account.models?.length && model.startsWith('gpt-');
-    if (account.provider === 'cursor') {
+    if (account.provider === 'cursor' || account.provider === 'opencode') {
       // Once the CLI's list is known, only those ids. Before that, anything
-      // that isn't a Claude alias: Cursor's own ids include gpt- ones.
+      // that isn't a Claude alias: these CLIs' ids include gpt- ones.
       if (account.models?.length) return false;
       return !isClaudeModel(model);
     }

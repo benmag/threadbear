@@ -403,7 +403,7 @@ test('policies: the app\'s choice persists; THREADBEAR_CLI_UPDATES=off and a han
 
   const off = setup({ env: { PATH: '/usr/bin:/bin', THREADBEAR_CLI_UPDATES: 'off' } });
   off.u.setPolicy('claude', 'auto');
-  assert.deepEqual(off.u.list().map((c) => c.policy), ['off', 'off', 'off']);
+  assert.deepEqual(off.u.list().map((c) => c.policy), ['off', 'off', 'off', 'off']);
   // A copy installed earlier isn't used: tests and dev runners use the fallback.
   fs.mkdirSync(path.join(off.tools, '0.164.0', 'node_modules', '@openai', 'codex'), { recursive: true });
   fs.writeFileSync(path.join(off.tools, '0.164.0', 'node_modules', '@openai', 'codex', 'package.json'), '{}');

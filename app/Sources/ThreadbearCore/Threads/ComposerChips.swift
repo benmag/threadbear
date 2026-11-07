@@ -83,7 +83,7 @@ public enum ComposerChips {
     public static func effortLevels(provider: String) -> [String] {
         if provider == "codex" { return codexEffortLevels }
         // Cursor has no effort control unless a model lists its own levels.
-        if provider == "cursor" { return [] }
+        if provider == "cursor" || provider == "opencode" { return [] }
         return effortLevels
     }
 
