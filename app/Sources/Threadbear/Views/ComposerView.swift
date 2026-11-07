@@ -24,13 +24,13 @@ struct ComposerView: View {
     @State private var importing = 0
     @State private var handle = ComposerHandle()
     @State private var palette = PaletteState()
-    /// The pane's width (paletteWindow), from the frame round the box.
-    @State private var paneWidth: CGFloat = 0
 
     static var cornerRadius: CGFloat { zoomed(20) }
     static var padding: CGFloat { zoomed(14) }
 
     private var draftKey: String { thread?.id ?? "new" }
+    /// Messages sent from this box, for the send arrow's nudge.
+    @State private var sends = 0
 
     var body: some View {
         // Normalized, so a picture added from outside the box (an ask's
@@ -43,7 +43,7 @@ struct ComposerView: View {
         let picks = thread.map { app.picks(for: $0) } ?? [:]
         // So are follow-ups ticked on a done card.
         let followUps = thread.map { app.pickedFollowUps(threadId: $0.id) } ?? FollowUpPicks()
-        let canSend = !picks.isEmpty || !followUps.isEmpty || ComposerChips.canSend(text: draft.wrappedValue.text, imageCount: draft.wrappedValue.images.count)
+        let canSend = Self.canSend(draft.wrappedValue, picks: picks, followUps: followUps)
         // A new thread on its way: what was sent stays, greyed and locked,
         // until the runner has made the thread.
         let creating = thread == nil && app.creatingThread
@@ -55,6 +55,10 @@ struct ComposerView: View {
         VStack(alignment: .leading, spacing: 0) {
         if let thread {
             RefusalOffer(thread: thread)
+        }
+        // Voice mode's bear, over the box while it's on for this thread.
+        if VoiceMode.shared.isOn(for: thread?.id ?? VoiceMode.newThread) {
+            VoiceStage(threadId: thread?.id ?? VoiceMode.newThread)
         }
         // The folder's actions (patches), on shelves sitting on the box's
         // top edge, in from its rounded corner (ActionChips).
@@ -96,7 +100,7 @@ struct ComposerView: View {
                 focusTrigger: app.focusRequests[draftKey] ?? 0,
                 placeholder: placeholder(picks, followUps: followUps, needsYou: needsYou),
                 onSend: { send() },
-                onReturnWhenEmpty: { returnWhenEmpty(draft.wrappedValue) },
+                onReturnWhenEmpty: { command in returnWhenEmpty(draft.wrappedValue, command: command) },
                 pictures: ComposerTextView.Pictures(allowed: { picturesAllowed() }, importOne: { await importPicture($0) }),
                 handle: handle,
                 onEscape: { cancelEdit() },
@@ -114,6 +118,7 @@ struct ComposerView: View {
                 onSend: { send() },
                 onSchedule: { app.newSchedule(from: thread, draftKey: draftKey) }
             )
+            .environment(\.sendNudges, sends)
         }
         .padding(Self.padding)
         }
@@ -129,35 +134,18 @@ struct ComposerView: View {
         // panel was picked up (Codex's review, 6 Nov).
         .onAppear { if !isGhost { controller?.composerHandle = handle } }
         }
-        // The slash command palette, over the transcript just above the box.
+        // The slash command palette, in a panel of its own just above the
+        // box (SlashPalettePanel): drawn here it was cut off at the pane.
         .overlay(alignment: .top) {
-            if let thread, let query = paletteQuery(draft.wrappedValue.text) {
-                let height = paletteHeight
-                SlashPaletteView(
-                    commands: app.slashCommands[thread.id],
-                    query: query,
-                    provider: thread.provider,
-                    recent: app.recentSlashCommands,
-                    state: $palette,
-                    current: paletteCurrent(thread),
-                    onFill: { pick($0, run: false) },
-                    onRun: { pick($0, run: true) },
-                    // Another Mac's runner found the file there, not here.
-                    onOpen: app.runnerName(of: thread) == nil ? { path in
-                        palette.closedAt = draft.wrappedValue.text
-                        app.preview(path: path, in: thread)
-                    } : nil,
-                    height: height,
-                    layout: Binding(get: { app.slashPaletteLayout }, set: { app.slashPaletteLayout = $0 }),
-                    window: paletteWindow
-                )
-                // A width Mike dragged it to, centred over the box; else the
-                // box's own.
-                .frame(width: app.slashPaletteLayout.width.map { CGFloat(SlashPalette.Layout.width($0, window: paletteWindow.width)) })
-                // Its height is fixed, so lifting it by that sits it just above.
-                .offset(y: -(height + zoomed(8)))
-                .onAppear { app.loadSlashCommands(thread.id) }
-            }
+            SlashPaletteHost(
+                content: paletteContent(draft),
+                autoHeight: paletteHeight,
+                layout: Binding(get: { app.slashPaletteLayout }, set: { app.slashPaletteLayout = $0 })
+            )
+            .frame(height: 1)
+        }
+        .task(id: thread.flatMap { paletteQuery(draft.wrappedValue.text) != nil ? $0.id : nil }) {
+            if let thread, paletteQuery(draft.wrappedValue.text) != nil { app.loadSlashCommands(thread.id) }
         }
         // Esc closed the palette at that text only: any change reopens it,
         // even back to the same words later.
@@ -168,10 +156,6 @@ struct ComposerView: View {
         // centred, with the same side insets once the window is narrower.
         .frame(maxWidth: Theme.maxContentWidth)
         .padding(.horizontal, Theme.sideInset)
-        // As wide as the pane, the box still centred in it, so its width
-        // can be read for the palette.
-        .frame(maxWidth: .infinity)
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { paneWidth = $0 }
         // At 12 the card looked wedged against the window's rounded bottom
         // corners; Codex and T3 leave about 24.
         .padding(.bottom, zoomed(20))
@@ -191,6 +175,10 @@ struct ComposerView: View {
             .fill(dark ? Color.primary.opacity(0.085) : Color.white)
             .shadow(color: .black.opacity(dark ? 0 : 0.08), radius: zoomed(14), y: zoomed(4))
             .overlay(shape.strokeBorder(attention ? Color(nsColor: .controlAccentColor) : Color(nsColor: .separatorColor), lineWidth: attention ? 1 : 0.5))
+            // Fades up with a card settling in, rather than snapping on. Not
+            // going to a thread that's waiting already: this box is reused
+            // from thread to thread, and those change over at once.
+            .animation(session?.arrivingCard != nil ? .easeOut(duration: 0.2) : nil, value: attention)
             .contentShape(shape)
             .onTapGesture { app.focusComposer(draftKey) }
     }
@@ -212,14 +200,29 @@ struct ComposerView: View {
         return SlashPalette.height(window: window, least: zoomed(300), most: zoomed(560))
     }
 
-    /// The window's height, and the width of the pane the box is in: a
-    /// palette dragged wider than the pane is cut off at its edges, so the
-    /// pane's width (less a margin) is the most it can be.
     private var paletteWindow: CGSize {
-        let size = handle.textView?.window?.contentLayoutRect.size ?? NSApp.keyWindow?.contentLayoutRect.size ?? CGSize(width: 1200, height: 800)
-        // Layout.width keeps 40 clear each side of what it's given.
-        let pane = paneWidth > 0 ? paneWidth : size.width
-        return CGSize(width: pane + 80 - zoomed(16), height: size.height)
+        handle.textView?.window?.contentLayoutRect.size ?? NSApp.keyWindow?.contentLayoutRect.size ?? CGSize(width: 1200, height: 800)
+    }
+
+    /// The palette for what's typed, or nil when it's closed.
+    private func paletteContent(_ draft: Binding<Draft>) -> SlashPaletteView? {
+        guard let thread, let query = paletteQuery(draft.wrappedValue.text) else { return nil }
+        return SlashPaletteView(
+            commands: app.slashCommands[thread.id],
+            query: query,
+            provider: thread.provider,
+            recent: app.recentSlashCommands,
+            state: $palette,
+            current: paletteCurrent(thread),
+            onFill: { pick($0, run: false) },
+            onRun: { pick($0, run: true) },
+            // Another Mac's runner found the file there, not here.
+            onOpen: app.runnerName(of: thread) == nil ? { path in
+                palette.closedAt = draft.wrappedValue.text
+                app.preview(path: path, in: thread)
+            } : nil,
+            layout: Binding(get: { app.slashPaletteLayout }, set: { app.slashPaletteLayout = $0 })
+        )
     }
 
     /// What /model and /effort would change, as the thread has it now.
@@ -282,18 +285,32 @@ struct ComposerView: View {
     /// AppModel empties the box, and puts the draft back if it isn't sent.
     /// Picked answers go with it.
     private func send() {
+        // Return in an empty box comes here too, with nothing to go.
+        if Self.canSend((app.drafts[draftKey] ?? Draft()).normalized,
+                        picks: thread.map { app.picks(for: $0) } ?? [:],
+                        followUps: thread.map { app.pickedFollowUps(threadId: $0.id) } ?? FollowUpPicks()) {
+            sends &+= 1
+        }
         app.send(threadId: thread?.id)
     }
 
-    /// Return with nothing typed sends picked answers on their own, or
-    /// else allows the sole approval (below).
-    private func returnWhenEmpty(_ draft: Draft) -> Bool {
+    private static func canSend(_ draft: Draft, picks: [Int: Int], followUps: FollowUpPicks) -> Bool {
+        !picks.isEmpty || !followUps.isEmpty || ComposerChips.canSend(text: draft.text, imageCount: draft.images.count)
+    }
+
+    /// Return with nothing typed sends picked answers on their own (once
+    /// every ask has one, or with ⌘), or else allows the sole approval (below).
+    private func returnWhenEmpty(_ draft: Draft, command: Bool) -> Bool {
         // An edit with only pictures left still sends; an empty one does nothing.
         if let thread, app.editing[thread.id] != nil {
             if !draft.images.isEmpty { send() }
             return true
         }
         if let thread, !app.picks(for: thread).isEmpty || !app.pickedFollowUps(threadId: thread.id).isEmpty {
+            // Picks with asks still unanswered: on to the next of those, as
+            // in a Something else box; ⌘Return sends them as they are.
+            if !app.picks(for: thread).isEmpty, !command,
+               controller?.returnWithUnanswered() == true { return true }
             send()
             return true
         }
@@ -606,7 +623,7 @@ struct ComposerTextField: NSViewRepresentable {
     var placeholder: String
     var onSend: () -> Void
     /// Return with nothing typed: true if it did something.
-    var onReturnWhenEmpty: () -> Bool = { false }
+    var onReturnWhenEmpty: (_ command: Bool) -> Bool = { _ in false }
     var pictures: ComposerTextView.Pictures?
     var handle: ComposerHandle?
     /// Esc: true if it did something (left an edit).
@@ -762,7 +779,12 @@ final class ComposerTextView: NSTextView {
     /// composer: lookups for the composer skip it.
     var inAnswerBox = false
     var onSend: (() -> Void)?
-    var onReturnWhenEmpty: (() -> Bool)?
+    /// With whether ⌘ was held.
+    var onReturnWhenEmpty: ((_ command: Bool) -> Bool)?
+    /// An answer box's Return, with whether ⌘ was held, in place of
+    /// `onSend` and `onReturnWhenEmpty`: there Return goes on to the next
+    /// unanswered ask and only ⌘Return always sends (AskAnswerBox).
+    var onAnswerReturn: ((_ command: Bool) -> Void)?
     var onPaletteKey: ((PaletteKey) -> Bool)?
     var onEscape: (() -> Bool)?
     /// Pictures pasted or dropped in an ask's box, which keeps them beside
@@ -930,7 +952,9 @@ final class ComposerTextView: NSTextView {
         if isReturn, !hasMarkedText() {
             if event.modifierFlags.contains(.shift) || event.modifierFlags.contains(.option) {
                 insertLineContinuingList()
-            } else if string.isEmpty, onReturnWhenEmpty?() == true {
+            } else if let onAnswerReturn {
+                onAnswerReturn(event.modifierFlags.contains(.command))
+            } else if string.isEmpty, onReturnWhenEmpty?(event.modifierFlags.contains(.command)) == true {
                 // Allowed the waiting approval.
             } else {
                 onSend?()

@@ -35,13 +35,8 @@ struct SlashPaletteView: View {
     /// runner is another Mac's, whose files aren't here.
     var onOpen: ((String) -> Void)?
 
-    /// SlashPalette.height for the window: about half of it. A fixed 300
-    /// left a big window's palette showing eight rows (Mike, 6 Nov).
-    var height: CGFloat = zoomed(300)
-    /// The sizes Mike dragged it to (AppModel.slashPaletteLayout), and the
-    /// window's, which bounds them.
+    /// The column widths Mike dragged (AppModel.slashPaletteLayout).
     @Binding var layout: SlashPalette.Layout
-    var window: CGSize = CGSize(width: 1200, height: 800)
 
     var body: some View {
         let all = commands ?? []
@@ -75,40 +70,26 @@ struct SlashPaletteView: View {
                 detail(picked)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            // Its edges drag to size the whole palette. It's centred over
-            // the box and sits on it, so a side grows both sides at once and
-            // the top grows upwards.
-            .overlay(alignment: .top) {
-                ResizeHandle(edge: .top, tip: "Drag to make it taller or shorter; double-click for half the window",
-                             start: { height },
-                             drag: { base, moved in layout.height = SlashPalette.Layout.height(base - moved.height, window: window.height) },
-                             reset: { layout.height = nil })
-                    .frame(height: zoomed(6))
-            }
-            .overlay(alignment: .leading) {
-                ResizeHandle(edge: .leading, tip: "Drag to make it wider or narrower; double-click for the box's width",
-                             start: { total },
-                             drag: { base, moved in layout.width = SlashPalette.Layout.width(base - 2 * moved.width, window: window.width) },
-                             reset: { layout.width = nil })
-                    .frame(width: zoomed(6))
-            }
-            .overlay(alignment: .trailing) {
-                ResizeHandle(edge: .trailing, tip: "Drag to make it wider or narrower; double-click for the box's width",
-                             start: { total },
-                             drag: { base, moved in layout.width = SlashPalette.Layout.width(base + 2 * moved.width, window: window.width) },
-                             reset: { layout.width = nil })
-                    .frame(width: zoomed(6))
-            }
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: height)
+        // It fills its panel (SlashPalettePanel), whose own edges size it.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
             RoundedRectangle(cornerRadius: zoomed(14), style: .continuous)
                 .fill(Color(nsColor: .windowBackgroundColor))
-                .shadow(color: .black.opacity(0.35), radius: zoomed(18), y: zoomed(6))
         }
         .overlay(RoundedRectangle(cornerRadius: zoomed(14), style: .continuous).strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
         .clipShape(RoundedRectangle(cornerRadius: zoomed(14), style: .continuous))
+        // Its edges are a window's, which have no double-click of their own.
+        .iconContextMenu {
+            Button("Default Size", systemImage: "arrow.down.right.and.arrow.up.left") {
+                layout.width = nil
+                layout.height = nil
+            }
+            Button("Default Column Widths", systemImage: "rectangle.split.3x1") {
+                layout.categories = nil
+                layout.list = nil
+            }
+        }
     }
 
     private func categories(_ all: [SlashCommand]) -> some View {
@@ -199,7 +180,7 @@ struct SlashPaletteView: View {
                 Text("/\(command.name)")
                     .font(.system(size: TypeScale.cardTitle + 3, weight: .semibold))
                 if let text = command.description, !text.isEmpty {
-                    Text(text)
+                    Text(SlashPalette.description(text))
                         .font(.system(size: TypeScale.label + 1))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -353,12 +334,11 @@ extension AppModel {
     }
 }
 
-/// An edge or divider of the palette that drags to resize it, with the
-/// resize pointer, and a double-click back to the size worked out for it.
-/// The drag is measured in the window, not the view, as the view moves and
-/// grows under the pointer while it goes.
+/// A line between the palette's columns that drags to size the column on
+/// its left, with the resize pointer, and a double-click back to the
+/// width worked out for it. (The palette's own edges are its panel's.)
 struct ResizeHandle: View {
-    enum Edge { case top, leading, trailing, column }
+    enum Edge { case column }
     let edge: Edge
     let tip: String
     /// The size when the drag starts.
@@ -369,18 +349,11 @@ struct ResizeHandle: View {
     @State private var base: Double?
 
     var body: some View {
-        Group {
-            if edge == .column {
-                // A hairline to see, with a wider strip to grab.
-                Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1)
-                    .padding(.horizontal, zoomed(3))
-                    .contentShape(Rectangle())
-                    .pointerStyle(.columnResize)
-            } else {
-                Color.clear.contentShape(Rectangle())
-                    .pointerStyle(.frameResize(position: edge == .top ? .top : edge == .leading ? .leading : .trailing))
-            }
-        }
+        // A hairline to see, with a wider strip to grab.
+        Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1)
+            .padding(.horizontal, zoomed(3))
+            .contentShape(Rectangle())
+            .pointerStyle(.columnResize)
         .gesture(
             DragGesture(minimumDistance: 1, coordinateSpace: .global)
                 .onChanged { value in

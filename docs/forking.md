@@ -67,7 +67,14 @@ gone from your fork, not just quiet.
   another Mac over ssh, put `"checkHost": "<ssh host>"` in your
   runner.json, or `"checkHosts"` with a list of them (Mike's is
   `["tinker-desk", "cloud"]`; a Linux one only takes `--quick` runs that
-  don't touch `ios/`); without either, it runs on yours.
+  don't touch `ios/`); without either, it runs on yours. On your Mac it
+  keeps one ssh connection per host through a socket in `~/.ssh/tbc`, and
+  the lock on each checkout's copy in `~/.cache/threadbear-check-locks`,
+  both folders only you can use (mode 700, yours; one that's anything else
+  is never used: ssh then connects afresh each time, and the lock refuses
+  to run). The folder the host reports for its copies must be a plain
+  absolute path (letters, digits, `.`, `_`, `/`, `-`), or that host is
+  passed over.
 
 ### Optional, with a switch
 
@@ -84,6 +91,7 @@ gone from your fork, not just quiet.
 | Connectors gateway | `runner/src/connectors.ts`; app `ConnectorsModel.swift`, `Views/ConnectorsPanel.swift`; Core `Connectors.swift`, `ConnectorsText.swift` | `THREADBEAR_CONNECTORS_URL=off`, or no gateway configured | Self-contained, but Notion task boards read through it. |
 | Notion task boards | `runner/src/notion-tasks.ts`; `useTaskBoards` and `refreshTasks` in `projects.ts`; the board in `Views/ProjectPage.swift` and `HighlightsBoard.swift` | Nothing happens without a gateway and a project with a Notion page | Medium. |
 | Sentry | `runner/src/sentry.ts`, app and iOS `CrashReporting.swift`, `app/SentryBinary/`, dSYM upload in `app/build-app.sh` | `THREADBEAR_SENTRY=off`; a fork never reports from the Mac (section 1) | Self-contained: drop the start calls in `main.ts` and both `ThreadbearApp.swift`, the logger handlers in `main.ts`, the `@sentry/node` dependency and the Swift package references. `HangWatch.swift` keeps its local logs. |
+| The ding when a thread finishes | app `DingPlayer.swift`, Core `Support/CompletionSound.swift` (the sounds, made in code), one call in `AppModel+Connection.swift`, the Notifications section in `Views/SettingsView.swift` | Off by default (Settings > General > Notifications) | Self-contained: drop the two files, the call and the section. |
 | The activity log | `runner/src/activity.ts` (`tb activity`), app `ActivityRecorder.swift`, Core `Support/Activity.swift` | Off by default (Settings > General) | Self-contained: about a dozen `ActivityRecorder.shared` calls in the app. |
 | Following main, upstream releases | `runner/src/update.ts`, `upstream.ts`, `bring-in.ts`, `scripts/release-signers`; app `AppUpdate.swift`, `Views/UpdatesPanel.swift`, `app/stage-update.sh` | `followMain: false` (or `THREADBEAR_FOLLOW_MAIN=0`); upstream is off with no `upstream` remote; `releases.bringIn: "off"` stops the update threads | Medium. Keep `release.ts` and `restart.ts`: handovers and crash rollback use them. |
 | The Xcode 26 build check | `.github/workflows/xcode-26.yml` | GitHub doesn't run a fork's workflows until you turn Actions on for it | Self-contained: delete the file. It builds the Mac and iPhone apps on GitHub's macos-26 runner, as Mike's own Macs only have a newer Xcode. |

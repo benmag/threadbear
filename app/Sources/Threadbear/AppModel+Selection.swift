@@ -15,6 +15,8 @@ extension AppModel {
             dock.show(WindowDock.threadPanel(threadId))
             return
         }
+        // Voice talks with the thread on screen: going to another ends it.
+        if VoiceMode.shared.isOn, VoiceMode.shared.threadId != threadId { VoiceMode.shared.stop() }
         selection = threadId
         openProjectId = nil
         showsProjectsHome = false
@@ -29,6 +31,8 @@ extension AppModel {
             // Its runner's connection closed while it was away.
             reconnectRemote(for: threadId)
         }
+        // Looked at now, so `woke` is on its way out: the note's bear needs telling first.
+        if threads[threadId]?.woke != nil { session.wakeUpPending = true }
         if let thread = threads[threadId], thread.needsYou || thread.lastSeq > thread.lastSeenSeq {
             scheduleMarkSeen(threadId)
         }
@@ -57,6 +61,7 @@ extension AppModel {
         let inbox = sections.inbox.map(\.id)
         guard let next = SidebarOrder.nextInInbox(after: selection, inbox: inbox) else {
             archivedNote = nil
+            milestoneNote = nil
             inboxEndNote = InboxEndNote(empty: inbox.isEmpty)
             return
         }
@@ -188,5 +193,13 @@ extension AppModel {
     func appBecameActive() {
         if subagentSelection == nil, let selection, let thread = threads[selection], thread.needsYou { scheduleMarkSeen(selection) }
         servePanelRequest()
+        // He's back: a milestone may have been waiting for him. The window
+        // isn't key yet at this point.
+        if milestones != nil {
+            Task {
+                try? await Task.sleep(for: .milliseconds(200))
+                considerMilestone()
+            }
+        }
     }
 }

@@ -488,7 +488,10 @@ function takes `token` (a phone token from `tokens:issue`) and throws
 
 Queries:
 
-- `phone:me({ token })` → `{ name, expiresAt }`.
+- `phone:me({ token })` → `{ name, expiresAt, apiVersion, pushOff? }`.
+  `pushOff` is true when this backend can't send notifications (a
+  self-hosted one, docs/self-hosting.md); the phone's Settings says so in
+  place of the Notify me picker.
 - `phone:runners({ token })` → `[{ runnerId, name, version, lastSeenAt,
   draining }]`. Offline is `lastSeenAt` older than 3 minutes (a runner
   that stopped for good has `lastSeenAt` of 1970).
@@ -540,7 +543,9 @@ Queries:
   oldest message the phone has is newer than that, there's more to load.
 - `phone:messages({ token, threadId, beforeSeq?, limit?, tools? })` (since
   API 2, 28 Oct) → `{ messages, hasMore }`, oldest first: the newest `limit`
-  (default 50, at most 2000) or the `limit` before `beforeSeq`. Every message
+  (default 50, at most 2000; NaN or an infinity is refused, here and in every
+  `limit`) or the `limit` before `beforeSeq`. Without `tools` it looks past at
+  most 4,000 tool rows for the page's text ones, then says `hasMore`. Every message
   is kept since API 2, and with `tools: true` there's one row per tool call
   too (`role: "tool"`, a one-line `text` such as "Run the unit tests" or
   "Edited ~/dev/x.ts", and `toolKind`). It reads Convex alone, so it works
@@ -592,9 +597,18 @@ sidebar does; a runner before API 5 sends projects without `icon`.
 Mutations, each returning a `commandId`. The owning runner takes it
 within a second or two while it's online (state `taken`, then `done` or
 `failed` with a `note`); while it's offline the command waits as
-`pending`:
+`pending`, for up to 14 days (then `failed`, `sync:pruneFiles`). At most
+200 commands, or 8 MB of them, wait for one runner; past that the next is
+refused with `{ kind: "tooMany" }` until it takes some. A `runnerId` the
+phone names must be one that has heartbeated (or `"any"`), else
+`{ kind: "notFound" }`:
 
 - `phone:send({ token, threadId, text, answers? })` (`answers`, API 14: the card's asks it answers, `{ action, answer }[]`)
+- `phone:press({ token, threadId, buttonId })` (API 59) → commandId: a
+  reply button's press (docs/protocol.md, "Reply buttons"), queued as a
+  `press` command with `{ buttonId }`. Its `resultThreadId` is the thread
+  the button started or messaged. `phone:messages` rows carry `buttons`,
+  the state of the buttons an assistant message links, since API 59.
 - `phone:respond({ token, threadId, approvalId, decision: "allow" |
   "allowAlways" | "deny", message? })`
 - `phone:answer({ token, threadId, approvalId, answers: Record<string,
@@ -636,7 +650,11 @@ within a second or two while it's online (state `taken`, then `done` or
   after a day, so the phone should ask again rather than expect them to
   stay.
 - `phone:registerDevice({ token, apnsToken, environment: "sandbox" |
-  "production" })`. A push arrives when a thread starts needing Mike,
+  "production" })`. `apnsToken` is the device token in hex. A phone token
+  keeps at most 5 registrations; a new one past that replaces its oldest.
+  Revoking a token takes effect in that one small write (its phones get no
+  more pushes at once, `devices:targets`); their rows are deleted after, 100
+  a run (`tokens:dropDevices`). A push arrives when a thread starts needing Mike,
   as `{ aps: { alert: { title, body }, sound: "default", "thread-id":
   threadId }, threadId }` for bundle id `com.mikecann.threadbear`; the
   title is the thread's title and the body the question, the approval
@@ -675,6 +693,17 @@ first. The lessons are Agent Archive's:
 - **Cleaning up isn't undoing.** That cleanup also had to reach backups and
   exports, and the keys had been to the AI providers already. So the docs say to
   rotate, and never that the data is secret-free.
+
+- **Scrub before cutting.** Titles, previews, ask lines, the wake note, tool
+  titles, quoted replies and check output are cut short on the runner, and a
+  rule that needs a secret's end (a connection URL's `@`, a closing quote, a
+  length) misses half of one: on 6 Nov Daybreak found a wake note cut through
+  `postgres://alice:password@host` with the password intact. So a cut never
+  lands inside anything the scrub would take out (`runner/src/safe-cut.ts`,
+  with the runner's known values too); it moves back to before it, leaving the
+  runner's own copy unscrubbed. Taking a first line, a first sentence or the
+  last part of something counts as a cut too. The wake note is scrubbed whole
+  on the way up and only then cut.
 
 Not scrubbed, on purpose: a command's words while it's on its way (a message from
 the phone or another Mac has to reach the runner as typed). Once a command is over,

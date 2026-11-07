@@ -104,4 +104,13 @@ final class SlashCommandsTests: XCTestCase {
         let saved = try! JSONDecoder().decode(L.self, from: JSONEncoder().encode(L(height: 500, list: 300)))
         XCTAssertEqual(saved, L(height: 500, list: 300))
     }
+
+    func testDescriptionRendersInlineMarkdown() {
+        let text = SlashPalette.description("Run the `computercub` command, **now**.")
+        XCTAssertEqual(String(text.characters), "Run the computercub command, now.")
+        let code = text.runs.first { $0.inlinePresentationIntent == .code }
+        XCTAssertEqual(code.map { String(text[$0.range].characters) }, "computercub")
+        // Plain words and paths come through as they are.
+        XCTAssertEqual(String(SlashPalette.description("Open chrome:// pages (Finder, Xcode)").characters), "Open chrome:// pages (Finder, Xcode)")
+    }
 }

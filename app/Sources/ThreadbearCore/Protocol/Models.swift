@@ -357,8 +357,9 @@ public struct ImageRef: Sendable, Hashable, Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         path = try c.decode(String.self, forKey: .path)
         mediaType = try c.decodeIfPresent(String.self, forKey: .mediaType) ?? "image/png"
-        width = try c.decodeIfPresent(Double.self, forKey: .width).map { Int($0) }
-        height = try c.decodeIfPresent(Double.self, forKey: .height).map { Int($0) }
+        // Never Int(_:) of a number off the wire, which traps on 1e100.
+        width = try c.decodeIfPresent(Double.self, forKey: .width).flatMap { $0.wholeCount(atMost: 1_000_000) }
+        height = try c.decodeIfPresent(Double.self, forKey: .height).flatMap { $0.wholeCount(atMost: 1_000_000) }
     }
 }
 
@@ -488,6 +489,21 @@ public struct ConvexLogin: Sendable, Equatable, Decodable {
         self.url = url
         self.code = code
         self.message = message
+    }
+}
+
+public extension ConvexLogin {
+    /// The page to open: only ever Convex's own device sign-in
+    /// (LinkPolicy.convexSignIn). The runner may be another Mac's, and its
+    /// answer is opened on this one, so a `file:` URL or another site from
+    /// it must never reach the browser or another app (Daybreak, 7 Nov).
+    var page: URL? { LinkPolicy.convexSignIn(url) }
+
+    /// Why the sign-in stops: a page that isn't Convex's, from the first
+    /// answer or any later one. Nil when there's no page or it's fine.
+    var refusedPage: String? {
+        guard url != nil, page == nil else { return nil }
+        return "The runner's sign-in page isn't Convex's (\(LinkPolicy.convexSignInHost)), so Threadbear didn't open it. Run npx convex login on that Mac instead."
     }
 }
 
@@ -795,7 +811,7 @@ public struct Subagent: Sendable, Hashable, Codable, Identifiable {
         background = try c.decodeIfPresent(Bool.self, forKey: .background) ?? false
         activity = try c.decodeIfPresent(String.self, forKey: .activity)
         summary = try c.decodeIfPresent(String.self, forKey: .summary)
-        toolUses = try c.decodeIfPresent(Double.self, forKey: .toolUses).map { Int($0) }
+        toolUses = try c.decodeIfPresent(Double.self, forKey: .toolUses).flatMap { $0.wholeCount() }
         startedAt = try c.decodeIfPresent(String.self, forKey: .startedAt).flatMap(ISO8601.parse) ?? Date(timeIntervalSince1970: 0)
         endedAt = try c.decodeIfPresent(String.self, forKey: .endedAt).flatMap(ISO8601.parse)
     }
@@ -982,7 +998,10 @@ public struct LooseEnds: Sendable, Hashable, Codable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        seq = try c.decode(Int.self, forKey: .seq)
+        guard let seq = c.lenientInt(forKey: .seq) else {
+            throw DecodingError.dataCorruptedError(forKey: .seq, in: c, debugDescription: "No seq")
+        }
+        self.seq = seq
         ends = c.lossyArray(LooseEnd.self, forKey: .ends)
     }
 
@@ -1264,11 +1283,11 @@ public struct ThreadSummary: Sendable, Hashable, Codable, Identifiable {
         starredAt = try date(.starredAt)
         onOldRunner = ((try? c.decodeIfPresent(Bool.self, forKey: .onOldRunner)) ?? nil) ?? false
         preview = try c.decodeIfPresent(String.self, forKey: .preview) ?? ""
-        lastSeq = try c.decodeIfPresent(Int.self, forKey: .lastSeq) ?? 0
-        lastSeenSeq = try c.decodeIfPresent(Int.self, forKey: .lastSeenSeq) ?? 0
+        lastSeq = c.lenientInt(forKey: .lastSeq) ?? 0
+        lastSeenSeq = c.lenientInt(forKey: .lastSeenSeq) ?? 0
         nativeSessionId = try c.decodeIfPresent(String.self, forKey: .nativeSessionId)
-        contextTokens = try c.decodeIfPresent(Double.self, forKey: .contextTokens).map { Int($0) }
-        contextWindow = ((try? c.decodeIfPresent(Double.self, forKey: .contextWindow)) ?? nil).map { Int($0) }
+        contextTokens = try c.decodeIfPresent(Double.self, forKey: .contextTokens).flatMap { $0.wholeCount() }
+        contextWindow = ((try? c.decodeIfPresent(Double.self, forKey: .contextWindow)) ?? nil).flatMap { $0.wholeCount() }
         costUsd = try c.decodeIfPresent(Double.self, forKey: .costUsd)
         panels = c.lossyArray(Panel.self, forKey: .panels)
         actions = c.lossyArray(Action.self, forKey: .actions)
@@ -1287,7 +1306,7 @@ public struct ThreadSummary: Sendable, Hashable, Codable, Identifiable {
         sample = (try? c.decodeIfPresent(Bool.self, forKey: .sample)) ?? false
         needs = (try? c.decodeIfPresent(String.self, forKey: .needs)) ?? nil
         asks = c.lossyArray(Ask.self, forKey: .asks)
-        asksSeq = (try? c.decodeIfPresent(Int.self, forKey: .asksSeq)) ?? nil
+        asksSeq = c.lenientInt(forKey: .asksSeq)
         highlightsAt = ((try? c.decodeIfPresent(String.self, forKey: .highlightsAt)) ?? nil).flatMap(ISO8601.parse)
         schedule = (try? c.decodeIfPresent(ThreadSchedule.self, forKey: .schedule)) ?? nil
         startedBy = (try? c.decodeIfPresent(ThreadStartedBy.self, forKey: .startedBy)) ?? nil
@@ -1482,6 +1501,18 @@ public struct WaitingOn: Sendable, Hashable, Codable {
     enum CodingKeys: String, CodingKey { case threadId, title, until, done }
 }
 
+extension ThreadSummary {
+    /// The thread as it will be once "Wake when…" has landed: put away, its
+    /// row saying Thinking… until the runner has worked out when.
+    public func hibernating(said: String) -> ThreadSummary {
+        var thread = self
+        thread.snoozedUntil = .distantFuture
+        thread.snoozedUntilRestart = false
+        thread.wakeWhen = WakeWhen(said: said, pending: true)
+        return thread
+    }
+}
+
 public struct WakeWhen: Sendable, Hashable, Codable {
     public var said: String
     public var topic: String?
@@ -1572,6 +1603,10 @@ public struct HelloResult: Sendable, Hashable, Decodable {
     /// Nil from a runner older than pools: the app then works as before,
     /// with providers in the picker's rail and an account chip.
     public var pools: [Pool]?
+    /// The runner's experiments that are on (protocol "hello"), for the
+    /// ones that live in the app, like Voice mode. Empty from an older
+    /// runner, so they stay off.
+    public var experiments: Set<String>
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1584,10 +1619,11 @@ public struct HelloResult: Sendable, Hashable, Decodable {
         clis = c.lossyArray(CliStatus.self, forKey: .clis)
         updates = try? c.decodeIfPresent(RunnerUpdates.self, forKey: .updates)
         pools = c.contains(.pools) ? c.lossyArray(Pool.self, forKey: .pools) : nil
+        experiments = Set(c.lossyArray(String.self, forKey: .experiments))
     }
 
     enum CodingKeys: String, CodingKey {
-        case runnerVersion, `protocol`, accounts, defaults, clis, updates, pools
+        case runnerVersion, `protocol`, accounts, defaults, clis, updates, pools, experiments
     }
 }
 
@@ -1747,10 +1783,15 @@ struct RunnerUpdatesParams: Decodable {
 /// Fast parser and formatter for the protocol's ISO 8601 UTC strings.
 public enum ISO8601 {
     /// Parses "2026-10-26T13:44:00Z", with optional fractional seconds and a
-    /// "+hh:mm" offset. Hand-rolled because thread lists parse thousands of these.
+    /// "+hh:mm" (or "+hhmm") offset; no zone at all is read as UTC. Hand-rolled
+    /// because thread lists parse thousands of these. Anything else is nil:
+    /// these strings come from other runners and the backend, and an offset
+    /// of "+////" once reached `byte - 48` on a byte below "0", which traps
+    /// (Daybreak, 7 Nov 2026), so every byte is checked before it's used.
     public static func parse(_ text: String) -> Date? {
         let utf8 = Array(text.utf8)
-        guard utf8.count >= 19 else { return nil }
+        // The longest real one is nanoseconds and an offset, 35 bytes.
+        guard utf8.count >= 19, utf8.count <= 64 else { return nil }
         func number(_ start: Int, _ length: Int) -> Int? {
             var value = 0
             for index in start..<(start + length) {
@@ -1761,30 +1802,43 @@ public enum ISO8601 {
             }
             return value
         }
-        guard let year = number(0, 4), let month = number(5, 2), let day = number(8, 2),
-              let hour = number(11, 2), let minute = number(14, 2), let second = number(17, 2)
+        func byte(_ index: Int, is choices: String) -> Bool {
+            index < utf8.count && choices.utf8.contains(utf8[index])
+        }
+        guard byte(4, is: "-"), byte(7, is: "-"), byte(10, is: "Tt "), byte(13, is: ":"), byte(16, is: ":"),
+              let year = number(0, 4), let month = number(5, 2), let day = number(8, 2),
+              let hour = number(11, 2), let minute = number(14, 2), let second = number(17, 2),
+              (1...12).contains(month), (1...31).contains(day), hour <= 23, minute <= 59, second <= 60
         else { return nil }
         var index = 19
         var fraction = 0.0
         if index < utf8.count, utf8[index] == UInt8(ascii: ".") {
             index += 1
+            let digits = index
             var scale = 0.1
             while index < utf8.count, utf8[index] >= 48, utf8[index] <= 57 {
                 fraction += Double(utf8[index] - 48) * scale
                 scale /= 10
                 index += 1
             }
+            guard index > digits else { return nil }
         }
         var offsetSeconds = 0
         if index < utf8.count {
             let sign = utf8[index]
-            if sign == UInt8(ascii: "+") || sign == UInt8(ascii: "-") {
-                let rest = Array(utf8[(index + 1)...]).filter { $0 != UInt8(ascii: ":") }
-                guard rest.count >= 4 else { return nil }
-                let hours = Int(rest[0] - 48) * 10 + Int(rest[1] - 48)
-                let minutes = Int(rest[2] - 48) * 10 + Int(rest[3] - 48)
+            if sign == UInt8(ascii: "Z") || sign == UInt8(ascii: "z") {
+                index += 1
+            } else if sign == UInt8(ascii: "+") || sign == UInt8(ascii: "-") {
+                // "+hh:mm" or "+hhmm", each a digit, and a real offset.
+                let colon = byte(index + 3, is: ":") ? 1 : 0
+                guard let hours = number(index + 1, 2), let minutes = number(index + 3 + colon, 2),
+                      hours <= 23, minutes <= 59 else { return nil }
                 offsetSeconds = (hours * 3600 + minutes * 60) * (sign == UInt8(ascii: "+") ? 1 : -1)
+                index += 5 + colon
+            } else {
+                return nil
             }
+            guard index == utf8.count else { return nil }
         }
         let days = daysFromCivil(year: year, month: month, day: day)
         let seconds = Double(days * 86_400 + hour * 3600 + minute * 60 + second - offsetSeconds) + fraction

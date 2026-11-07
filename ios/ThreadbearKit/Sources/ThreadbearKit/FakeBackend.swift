@@ -20,6 +20,14 @@ public final class FakeBackend: Backend, @unchecked Sendable {
     private var listeners: [UUID: @Sendable () -> Void] = [:]
     /// How long a fake turn takes. Zero in tests.
     private let turnDelay: Duration
+    /// How long a new thread takes to start (AppModel's -ThreadbearSlowStart
+    /// makes it long, so the inbox's Starting row stays for a screenshot).
+    public var startDelay: Duration = .seconds(1.5)
+    /// How long an answer to a card waits for the "runner" to take it, to see
+    /// the card waiting. Nothing changes until then, as on a real one.
+    public var answerDelay: Duration = .zero
+    /// And then it refuses them, to see a card coming back.
+    public var answersFail = false
     /// How long the thread lists take to answer the first time, to see the
     /// app's loading rows (`-ThreadbearSlowLoad`). Zero normally.
     private let listDelay: Duration
@@ -290,6 +298,25 @@ public final class FakeBackend: Backend, @unchecked Sendable {
         changed()
     }
 
+    /// Only these sample threads, for screenshots of a short inbox.
+    public func keepOnly(_ ids: Set<String>) {
+        mutate { s in s.threadsById = s.threadsById.filter { ids.contains($0.key) } }
+    }
+
+    /// The running sample thread's turn ends by itself after a while, to watch
+    /// its row move to the inbox.
+    public func finishRunningThread(after delay: Duration) {
+        Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            self?.mutate { s in
+                s.threadsById["a5"]?.status = .idle
+                s.threadsById["a5"]?.working = nil
+                s.threadsById["a5"]?.unread = true
+                s.threadsById["a5"]?.lastActivityAt = .now
+            }
+        }
+    }
+
     public func me() async throws -> PhoneIdentity {
         // Always a current backend, so the demo never says the Mac needs updating.
         PhoneIdentity(name: "iphone", expiresAt: Date.now.addingTimeInterval(90 * 86_400),
@@ -480,41 +507,89 @@ public final class FakeBackend: Backend, @unchecked Sendable {
             return id
         }
         let text = Self.withPictures(text, images)
-        mutate { s in
-            s.append(threadId, role: .user, text: text, origin: "phone")
-            // The next turn closes the card, as on the runner.
-            s.threadsById[threadId]?.asks = nil
-            s.threadsById[threadId]?.asksSeq = nil
-            s.threadsById[threadId]?.next = nil
-            s.threadsById[threadId]?.status = .running
-            s.threadsById[threadId]?.working = "Bear with me"
-            s.threadsById[threadId]?.needsYou = false
-            s.threadsById[threadId]?.unread = false
-            s.threadsById[threadId]?.lastActivityAt = .now
+        let id = answered { fake in
+            fake.mutate { s in
+                s.waitingByThread[threadId] = nil
+                s.append(threadId, role: .user, text: text, origin: "phone")
+                // The next turn closes the card, as on the runner.
+                s.threadsById[threadId]?.asks = nil
+                s.threadsById[threadId]?.asksSeq = nil
+                s.threadsById[threadId]?.next = nil
+                s.threadsById[threadId]?.status = .running
+                s.threadsById[threadId]?.working = "Bear with me"
+                s.threadsById[threadId]?.needsYou = false
+                s.threadsById[threadId]?.unread = false
+                s.threadsById[threadId]?.lastActivityAt = .now
+            }
+            fake.runTurn(threadId, reply: "Done. I've made that change and the checks pass.")
         }
-        runTurn(threadId, reply: "Done. I've made that change and the checks pass.")
-        return newCommand()
+        // Slow, it waits faded in the transcript as a real one does.
+        if answerDelay > .zero, !answersFail {
+            mutate { s in
+                s.waitingByThread[threadId, default: []].append(WaitingSend(commandId: id, state: .pending, text: text, photos: images.count,
+                                                                            createdAt: Date.now.timeIntervalSince1970 * 1000))
+            }
+        }
+        return id
+    }
+
+    /// Marks the button pressed on its message, as the runner's row would
+    /// come back, with the first other thread as the one it started.
+    public func press(threadId: String, buttonId: String) async throws -> String {
+        var started: String?
+        mutate { s in
+            started = s.threadsById.keys.sorted().first { $0 != threadId }
+            guard var list = s.messagesById[threadId] else { return }
+            for i in list.indices {
+                guard let b = list[i].buttons?.firstIndex(where: { $0.id == buttonId }) else { continue }
+                list[i].buttons![b].pressedThreadId = started
+                list[i].buttons![b].failed = nil
+            }
+            s.messagesById[threadId] = list
+        }
+        return newCommand(threadId: started)
+    }
+
+    /// Runs `land` when the runner would take the answer: now, or after
+    /// `answerDelay`, or never if it's refusing them.
+    private func answered(_ land: @escaping @Sendable (FakeBackend) -> Void) -> String {
+        guard answerDelay > .zero else {
+            land(self)
+            return newCommand()
+        }
+        let id = "cmd_" + UUID().uuidString.prefix(8)
+        lock.withLock { commands[id] = CommandStatus(state: .pending) }
+        let (delay, fails) = (answerDelay, answersFail)
+        Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self else { return }
+            if !fails { land(self) }
+            self.mutate { s in s.commands[id] = fails ? CommandStatus(state: .failed, note: "the runner refused it") : CommandStatus(state: .done) }
+        }
+        return id
     }
 
     public func respond(threadId: String, approvalId: String, decision: ApprovalOption) async throws -> String {
-        mutate { s in
-            s.threadsById[threadId]?.pendingApproval = nil
-            s.threadsById[threadId]?.status = decision == .deny ? .idle : .running
-            s.threadsById[threadId]?.working = decision == .deny ? nil : "Running the command"
+        answered { fake in
+            fake.mutate { s in
+                s.threadsById[threadId]?.pendingApproval = nil
+                s.threadsById[threadId]?.status = decision == .deny ? .idle : .running
+                s.threadsById[threadId]?.working = decision == .deny ? nil : "Running the command"
+            }
+            if decision != .deny { fake.runTurn(threadId, reply: "That ran fine. Everything's green.") }
         }
-        if decision != .deny { runTurn(threadId, reply: "That ran fine. Everything's green.") }
-        return newCommand()
     }
 
     public func answer(threadId: String, approvalId: String, answers: [String: String], summary: String) async throws -> String {
-        mutate { s in
-            s.append(threadId, role: .user, text: summary, origin: "phone")
-            s.threadsById[threadId]?.pendingApproval = nil
-            s.threadsById[threadId]?.status = .running
-            s.threadsById[threadId]?.working = "Bear with me"
+        answered { fake in
+            fake.mutate { s in
+                s.append(threadId, role: .user, text: summary, origin: "phone")
+                s.threadsById[threadId]?.pendingApproval = nil
+                s.threadsById[threadId]?.status = .running
+                s.threadsById[threadId]?.working = "Bear with me"
+            }
+            fake.runTurn(threadId, reply: "Thanks, going with that.")
         }
-        runTurn(threadId, reply: "Thanks, going with that.")
-        return newCommand()
     }
 
     public func secret(threadId: String, approvalId: String, answer: SecretAnswer) async throws -> String {
@@ -571,13 +646,21 @@ public final class FakeBackend: Backend, @unchecked Sendable {
         let id = UUID().uuidString.lowercased()
         let title = text.isEmpty ? "Untitled" : String(text.prefix(48))
         let text = Self.withPictures(text, images)
-        mutate { s in
-            s.threadsById[id] = PhoneThread(threadId: id, title: title, cwd: cwd ?? "~/code/misc", status: .running,
-                                            lastActivityAt: .now, working: "Bear with me")
-            s.append(id, role: .user, text: text, origin: "phone")
+        // Pending for a moment, as a real runner takes a second or more to
+        // make it, so the demo shows the inbox's Starting row.
+        let commandId = "cmd_" + UUID().uuidString.prefix(8)
+        lock.withLock { commands[commandId] = CommandStatus(state: .pending) }
+        Task {
+            try? await Task.sleep(for: startDelay)
+            mutate { s in
+                s.threadsById[id] = PhoneThread(threadId: id, title: title, cwd: cwd ?? "~/code/misc", status: .running,
+                                                lastActivityAt: .now, working: "Bear with me")
+                s.append(id, role: .user, text: text, origin: "phone")
+                s.commands[commandId] = CommandStatus(state: .done, threadId: id)
+            }
+            runTurn(id, reply: "On it. Here's what I found.")
         }
-        runTurn(id, reply: "On it. Here's what I found.")
-        return newCommand(threadId: id)
+        return String(commandId)
     }
 
     public func quickAsk(_ ask: QuickAskRecord) async throws -> String {

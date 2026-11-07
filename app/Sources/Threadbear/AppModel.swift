@@ -106,6 +106,9 @@ final class AppModel {
     /// its draft stays in the box, greyed and locked, with a spinner for
     /// Send, so the click visibly did something however slow the runner is.
     var creatingThread = false
+    /// This Mac's runner's experiments that are on (hello's `experiments`),
+    /// for the ones that live in the app: Voice mode.
+    var experiments: Set<String> = []
     /// How long a thread may sit idle with one of Mike's messages still
     /// queued before the app gives up on it showing.
     static let queuedGrace: Double = 10
@@ -132,6 +135,32 @@ final class AppModel {
     var flyingToArchive: Set<String> = []
     /// How many of those have landed, for the heading's box to bounce.
     var archiveLandings = 0
+    /// Archiving the last thread there was, from its own pane: the bear's
+    /// due in the pane once the archived page has landed, then it's there
+    /// until he types or opens a thread (`PaneBear`).
+    var inboxZeroBear: InboxZeroBear?
+    enum InboxZeroBear { case due, shown }
+    /// The same for Hibernating: threads whose panel is still sinking into
+    /// its heading, and how many have landed for the moon to dip.
+    var flyingToHibernate: Set<String> = []
+
+    /// Pages in flight that left an Inbox or Running row, noted as each one
+    /// sets off. The empty-inbox bear waits for those to land, as arriving
+    /// under the heading mid-flight would push it down and the page would
+    /// land short. A starred or sleeping thread's flight doesn't hold it up:
+    /// the Inbox was already empty, so a bear already there stays put rather
+    /// than blinking off and on under the page.
+    var leavingTheInbox: Set<String> = []
+    var flightLeavingTheInbox: Bool { !leavingTheInbox.isEmpty }
+
+    /// Notes where a flight is leaving from, before the thread moves.
+    func noteFlightLeaving(_ threadId: String) {
+        let sections = sections
+        if sections.inbox.contains(where: { $0.id == threadId }) || sections.running.contains(where: { $0.id == threadId }) {
+            leavingTheInbox.insert(threadId)
+        }
+    }
+    var hibernateLandings = 0
     /// The note at the top of the thread panel after Mike archives a thread
     /// here, with Undo; a click on it opens the thread (Mike asked 30 Oct).
     /// Not for one an agent or the phone archives. `ArchivedToast` takes it
@@ -141,6 +170,11 @@ final class AppModel {
     /// (⌥⌘↓) has nowhere to go: the open thread is the Inbox's last, or the
     /// Inbox is empty. `InboxEndToast` takes it down after a few seconds.
     var inboxEndNote: InboxEndNote?
+    /// The note at the top of the thread panel when the thread count passes
+    /// a milestone. `MilestoneToast` takes it down.
+    var milestoneNote: MilestoneNote?
+    /// Nil in scripted runs and tests, which never show that note.
+    @ObservationIgnored var milestones: MilestoneWatch?
     /// Bumped when a thread is picked from somewhere other than the list
     /// (Next Inbox Thread), so the list scrolls its row into view.
     var revealSelectionRequests = 0
@@ -241,6 +275,12 @@ final class AppModel {
     @ObservationIgnored var nextErrorThread: String?
     @ObservationIgnored var nextErrorDoing: String?
     var continuingRefusals: Set<String> = []
+    /// Patch versions whose Trust is on its way, as "file hash". The runner
+    /// answers only once it has read every thread's patches again, which
+    /// takes seconds, so the row shows a spinner and its button stops taking
+    /// clicks until then (AGENTS.md, "Assume every action is slow to land").
+    /// By version, so a file that changes again gets its button back.
+    var trustingPatches: Set<String> = []
     /// Bumped to put the cursor in a composer, by its draft key (a thread's
     /// id, or "new"): with threads open in several panels, only that one's.
     var focusRequests: [String: Int] = [:]
@@ -374,6 +414,9 @@ final class AppModel {
     /// heartbeat in between doesn't snap the rows back. Nil with none to give.
     var runnerOrder: [String]?
     @ObservationIgnored var pendingRunnerOrder: [String]?
+    /// Screenshots only: holds the top runner mid-drag by this much, as a
+    /// script can't hold a real drag still to photograph it.
+    @ObservationIgnored var runnerDragPreview: CGSize?
     /// Each runner's machine figures by runner id (`runners.stats`), asked
     /// every 10 s while a runner's details are open in the Runners panel.
     var runnerStats: [String: RunnerMachineStats] = [:]
@@ -396,6 +439,11 @@ final class AppModel {
     /// This Mac's copies of files in other runners' threads
     /// (`remoteFiles`, RemoteFiles.swift), made on first use.
     @ObservationIgnored var remoteFileStore: RemoteFileStore?
+    /// The thread a transcript link is being followed in, while a click on
+    /// it is handled (TranscriptTextView.forItsThread): a thread open in a
+    /// panel isn't the selected one, and another Mac's paths mustn't be
+    /// read as this Mac's (Daybreak, 7 Nov). Nil means the selected thread.
+    @ObservationIgnored var linkThreadId: String?
     /// Every project, archived ones too, in the runner's order (newest
     /// activity first). Replaced whole by `projects.updated`.
     var projects: [Project] = [] {
@@ -460,6 +508,8 @@ final class AppModel {
     /// The runner's settings for the Settings window: nil until
     /// `settings.get` answers, then replaced whole by `settings.updated`.
     var runnerSettings: RunnerSettings?
+    /// His standing instructions for every session; nil: no box (InstructionsModel.swift).
+    var standingInstructions: StandingInstructions?
     /// The runner is from before settings (it answers -32601).
     var settingsUnsupported = false
     /// Why the last change in the Settings window didn't take, shown there.
@@ -473,6 +523,9 @@ final class AppModel {
     /// website's root, or why nothing can pair. Never a token.
     var devices: [Device] = []
     var devicesSite: String?
+    /// The backend can't send phone notifications (a self-hosted one), from
+    /// runner.status, so Phone & browser says so.
+    var pushOff = false
     var devicesReason: String?
     var devicesError: String?
     var devicesUnsupported = false
@@ -571,6 +624,14 @@ final class AppModel {
     @ObservationIgnored var highlightAutoShow = HighlightAutoShow()
     /// The agents' show_panel requests shown this run (PanelRequestModel).
     @ObservationIgnored var panelRequestGate = PanelRequestGate()
+    /// What's waiting on the runner, by `BusyKey`, with how many of each
+    /// (AppModel+Busy.swift).
+    var busyKeys: [String: Int] = [:]
+    /// What those are doing, in words, for the ones clicked somewhere that
+    /// can't show a spinner: the newest shows in the banner.
+    var busyNotes: [BusyNote] = []
+    /// A moment's "that's done", in the same place.
+    var doneNote: String?
     /// Actions whose command is running, as "<threadId>/<actionId>", so
     /// the chip shows it and a second click doesn't start another.
     var runningActions: Set<String> = []
@@ -583,6 +644,11 @@ final class AppModel {
     /// A runner restart that's waiting for threads to finish or under way,
     /// for the quiet banner (see `banner`).
     var restart = RunnerRestart()
+    /// Requests a restart turned away, going again on the new runner, and
+    /// any made while they wait, each behind the one before
+    /// (`inRestartOrder`), with how many are in it.
+    @ObservationIgnored var restartQueue: Task<Void, Never>?
+    @ObservationIgnored var restartQueued = 0
     /// The website's root, from runner.status (nil while sync is off).
     var websiteURL: URL?
     /// The runner's own update (protocol "Runner updates"), for the rail's
@@ -695,6 +761,7 @@ final class AppModel {
     }
     @ObservationIgnored private var sectionsMemo: (key: DerivedKey, value: ThreadSections)?
     @ObservationIgnored private var projectSectionsMemo: (key: DerivedKey, value: ProjectSections)?
+    @ObservationIgnored private var panelOwnersMemo: (version: Int, value: [String: String])?
 
     // MARK: Derived
 
@@ -722,6 +789,23 @@ final class AppModel {
         projectSectionsMemo = (key, built)
         return built
     }
+    /// Any thread with a panel by this id, for a tab whose panel stays in the
+    /// layout when Mike moves to a thread without it. Every tab asks several
+    /// times on every thread update, mostly for panels nobody has (Threads,
+    /// the transcript), which walked every thread each time; so the answers
+    /// are kept until the threads change.
+    func threadOwning(panel: String) -> ThreadSummary? {
+        let threads = threads
+        if panelOwnersMemo?.version != threadsVersion {
+            var owners: [String: String] = [:]
+            for thread in threads.values where !thread.panels.isEmpty {
+                for panel in thread.panels where owners[panel.id] == nil { owners[panel.id] = thread.id }
+            }
+            panelOwnersMemo = (threadsVersion, owners)
+        }
+        return panelOwnersMemo?.value[panel].flatMap { threads[$0] }
+    }
+
     /// The schedule due to message each thread soonest, for the rows under
     /// Hibernating that are waiting on one.
     var wakes: [String: Schedule] { ThreadSections.wakes(schedules) }

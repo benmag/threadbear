@@ -294,6 +294,7 @@ const devices = [
 let deviceSeq = devices.length;
 const deviceList = () => ({ devices: [...devices], site: DEMO_SITE });
 
+let mockInstructions = { text: '' };
 const settings = {
   defaultCwd: defaults.cwd, idleMinutes: 30, maxLiveCLIs: 6, followMain: true, bulletReplies: true, oneReply: true,
   models: {
@@ -331,7 +332,13 @@ const BRUCE = 'runner_bruce';
 // Mike's runner order (backend API 58), every runner's id: set with
 // runners.setOrder and said back in remoteThreads.updated, as the real
 // runner passes on the backend's.
-let runnerOrder = ['runner_mock', BRUCE];
+// MOCK_MORE_RUNNERS=1 adds two more, for a list worth rearranging (only for
+// a look at Settings > Runners: the usual demo stays at two).
+const MORE_RUNNERS = process.env.MOCK_MORE_RUNNERS ? [
+  { id: 'runner_cloud', name: 'Hetzner Cloud', icon: 'cloud', online: true, lastSeenAt: new Date().toISOString() },
+  { id: 'runner_pixel', name: 'Pixel', icon: 'smartphone', online: true, lastSeenAt: new Date().toISOString() },
+] : [];
+let runnerOrder = ['runner_mock', BRUCE, ...MORE_RUNNERS.map((r) => r.id)];
 // Files on bruce's Mac that its threads name, for files.read from
 // /bruce/rpc (docs/protocol.md, "Other runners' threads"): the picture is a
 // real PNG, the rest text. None of these paths exist on this Mac.
@@ -341,7 +348,7 @@ const BRUCE_FILES = {
   blob: '/Users/bruce/Library/Application Support/Threadbear/threads/bruce_media/blobs/bruce_media_c0_0.txt',
 };
 const bruceModifiedAt = new Date(Date.now() - 3600_000).toISOString();
-addRemoteDemo();
+if (!process.env.TB_MOCK_NO_REMOTE) addRemoteDemo();
 /** The schedules (docs/protocol.md, "Schedules"), soonest first. */
 let schedules = [];
 addDemoSchedules();
@@ -803,6 +810,43 @@ async function dispatch(client, method, p) {
       broadcastSummary(t.summary.id);
       return { thread: t.summary };
     }
+    case 'buttons.list': {
+      // docs/protocol.md, "Reply buttons": every button the thread has.
+      const t = need(p.threadId);
+      return { buttons: [...(t.buttons?.values() ?? [])].map((button) => structuredClone(button)) };
+    }
+    case 'buttons.press': {
+      // Starts the thread or sends the message once, like the runner. It
+      // takes a moment (longer under mock.slow), and a button whose folder
+      // is "/gone" fails, so the app's pressing and failed pills can be seen.
+      const t = need(p.threadId);
+      const button = t.buttons?.get(p.buttonId);
+      if (!button) throw rpcError(-32602, `Button not found: ${p.buttonId}`);
+      if (button.pressed) return { button: structuredClone(button) };
+      await new Promise((resolve) => setTimeout(resolve, 600 + slow.queueMs));
+      const from = `[Sent by the agent in the thread "${t.summary.title}" (${t.summary.id.slice(0, 8)})]\n\n`;
+      let next;
+      try {
+        if (button.start?.cwd === '/gone') throw rpcError(-32602, 'Folder not found: /gone');
+        if (button.start) {
+          const made = await dispatch(client, 'threads.create', { text: from + button.start.text, title: button.start.title ?? button.title, cwd: button.start.cwd, permissionMode: button.start.permissionMode });
+          next = { ...button, pressed: { at: iso(), threadId: made.thread.id } };
+        } else {
+          need(button.send.threadId);
+          await dispatch(client, 'threads.send', { threadId: button.send.threadId, text: from + button.send.text });
+          next = { ...button, pressed: { at: iso(), threadId: button.send.threadId } };
+        }
+        delete next.failed;
+      } catch (e) {
+        const failed = { ...button, failed: { at: iso(), error: String(e.message ?? e).slice(0, 300) } };
+        t.buttons.set(failed.id, failed);
+        persist(t.summary.id, { type: 'button.updated', button: failed });
+        throw e;
+      }
+      t.buttons.set(next.id, next);
+      persist(t.summary.id, { type: 'button.updated', button: next });
+      return { button: structuredClone(next) };
+    }
     case 'reviews.list': {
       const t = need(p.threadId);
       return { reviews: [...(t.reviews?.values() ?? [])].filter((review) => review.status === 'pending').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).map((review) => structuredClone(review)) };
@@ -1019,7 +1063,7 @@ async function dispatch(client, method, p) {
           ];
       const skills = [
         { name: 'code-review', description: 'Review the current diff, or a PR number, branch or path, for correctness bugs, at the effort level given first.', argumentHint: '[low|medium|high] [target]', source: 'skill', scope: 'user', path: `${os.homedir()}/.claude/skills/code-review/SKILL.md` },
-        { name: 'computercub', description: "Drive Mac apps and the parts of Chrome extensions can't reach.", source: 'skill' },
+        { name: 'computercub', description: "Drive Mac apps and the parts of Chrome extensions can't reach, with the `computercub` command.", source: 'skill' },
         { name: 'cloudflare', description: 'Cloudflare platform: Workers, Pages, KV, D1, R2 and the rest.', source: 'skill' },
         { name: 'claude-api', description: 'Model ids, pricing, params and the Anthropic SDK.', source: 'skill' },
         { name: 'deslop', description: 'A second-pass cleanup over AI-written code using the repo style guide.', source: 'skill', scope: 'project', path: `${t.summary.cwd}/.claude/skills/deslop/SKILL.md` },
@@ -1213,6 +1257,12 @@ async function dispatch(client, method, p) {
       if (oldRunner) throw rpcError(-32601, `Unknown method ${method}`);
       if (p.refresh) connectors = { ...connectors, checkedAt: iso() };
       return { connectors };
+    case 'instructions.get':
+      return { instructions: mockInstructions };
+    case 'instructions.set':
+      mockInstructions = { text: p.text.trim() ? p.text.trim() + '\n' : '' };
+      broadcast('instructions.updated', { instructions: mockInstructions });
+      return { instructions: mockInstructions };
     case 'settings.get':
       return { settings };
     case 'settings.update': {
@@ -1924,7 +1974,7 @@ function remoteThreads(client) {
     runners: [{
       id: BRUCE, name: bruce.name, icon: bruce.icon, online: true, lastSeenAt: iso(),
       rpcUrl: `ws://127.0.0.1:${port}/bruce/rpc`, tokenFile: path.join(dataDir, `secrets/runners/${BRUCE}.token`),
-    }],
+    }, ...MORE_RUNNERS],
     threads: rows,
     order: runnerOrder,
   };
@@ -2078,7 +2128,9 @@ function scheduleWake(threadId) {
       s.snoozedUntil = undefined;
       delete s.wakeWhen;
       s.needsYou = true;
-      // As the runner does: "Woke up" on the row until it's opened.
+      // As the runner does: a note in the thread, and "Woke up" on the row
+      // until it's opened.
+      persist(threadId, { type: 'system.note', text: 'Woke up from hibernating.' });
       s.woke = { at: iso(), ...(s.snoozedAt ? { since: s.snoozedAt } : {}) };
       delete s.snoozedAt;
       broadcastSummary(threadId);
@@ -2944,7 +2996,9 @@ function loadFixtures() {
       summary.asked ??= events.map(askedLine).findLast(Boolean);
       const reviews = new Map();
       for (const event of events) if (event.type === 'review.updated') reviews.set(event.review.id, event.review);
-      const t = { summary, events, reviews, inProgress: new Map(), timers: [], dir };
+      const buttons = new Map();
+      for (const event of events) if (event.type === 'button.updated') buttons.set(event.button.id, event.button);
+      const t = { summary, events, reviews, buttons, inProgress: new Map(), timers: [], dir };
       updateReviewCount(t);
       loaded.push(t);
     }

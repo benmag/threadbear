@@ -134,7 +134,9 @@ public struct ReviewOption: Sendable, Hashable, Codable, Identifiable {
         reference = (try? c.decodeIfPresent(Bool.self, forKey: .reference)) ?? false
         image = try c.decode(ImageRef.self, forKey: .image)
         shots = c.lossyArray(ReviewShot.self, forKey: .shots)
-        url = (try? c.decodeIfPresent(String.self, forKey: .url)) ?? nil
+        // Only a web page: a runner (maybe another Mac's) sends this, and
+        // Open live hands it to the system. Anything else is no url at all.
+        url = LinkPolicy.web((try? c.decodeIfPresent(String.self, forKey: .url)) ?? nil)?.absoluteString
     }
 
     enum CodingKeys: String, CodingKey { case id, title, note, reference, image, shots, url }

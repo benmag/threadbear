@@ -190,6 +190,7 @@ export function MessageText({
   threadPath,
   pictureChips,
   pasted,
+  button,
 }: {
   text: string;
   pictures?: Map<string, string>;
@@ -199,6 +200,9 @@ export function MessageText({
   pictureChips?: boolean;
   // This message's pasted pictures that went up, by number (picture-chips.ts).
   pasted?: Map<number, string>;
+  // Draws a [title](button:<id>) link as its button. Left out (a shared
+  // page, whose readers mustn't press Mike's buttons), it's the title as text.
+  button?: (id: string, title: ReactNode) => ReactNode;
 }) {
   // The exact text Markdown reads, so a block's position can be looked up in it.
   const markdown = escapeDestinations(text);
@@ -273,6 +277,7 @@ export function MessageText({
                 );
               }
             }
+            if (link.kind === 'button') return button ? button(link.id, children) : <>{children}</>;
             if (link.kind === 'thread' && threadPath) {
               const path = threadPath(link.id);
               return (

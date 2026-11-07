@@ -17,6 +17,36 @@ export function isProvider(v: unknown): v is Provider {
 // reads and plans but changes nothing until Mike approves its plan
 // (docs/protocol.md, "Plan first").
 export type PermissionMode = 'full' | 'ask' | 'auto' | 'plan';
+export const PERMISSION_MODES: readonly PermissionMode[] = ['full', 'ask', 'auto', 'plan'];
+
+// Every place a mode crosses from one process to another checks it with
+// this, so a mode added later can't be dropped by one hop's own list and
+// leave the thread on the full-access default (Daybreak, 7 Nov 2026: Plan
+// first sent to another Mac arrived as Full access).
+export function isPermissionMode(v: unknown): v is PermissionMode {
+  return typeof v === 'string' && (PERMISSION_MODES as readonly string[]).includes(v);
+}
+
+// A new thread's mode in a `create` command another runner takes through
+// the backend (docs/protocol.md, "Other runners' threads through the
+// backend"). Plan first goes as Ask with `plan: true`: a runner or backend
+// from before it knew Plan first drops the flag and starts the thread on
+// Ask, never on the full access a missing mode means. Unknown modes are
+// refused, not dropped.
+export function remoteCreateMode(mode: unknown): Record<string, unknown> {
+  if (mode === undefined || mode === null) return {};
+  if (!isPermissionMode(mode)) throw new RpcError(ErrorCode.badParams, `permissionMode must be one of ${PERMISSION_MODES.join(', ')}`);
+  return mode === 'plan' ? { permissionMode: 'ask', plan: true } : { permissionMode: mode };
+}
+
+// What the runner taking a `create` command starts the thread on: undefined
+// (the default) only when the command names no mode at all.
+export function remoteCreateModeOf(a: { permissionMode?: unknown; plan?: unknown }): PermissionMode | undefined {
+  if (a.plan === true) return 'plan';
+  if (a.permissionMode === undefined || a.permissionMode === null) return undefined;
+  if (!isPermissionMode(a.permissionMode)) throw new Error(`Unknown permission mode ${JSON.stringify(a.permissionMode)}: the thread wasn't started.`);
+  return a.permissionMode;
+}
 // 'ultra' is Codex's multi-agent level; Claude never offers it.
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
 export const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
@@ -631,9 +661,36 @@ export type DesignReview = {
   replyTurnId?: string;
 };
 
+// A button an agent put in its reply (docs/protocol.md, "Reply buttons"):
+// pressing it starts a thread with the brief, or sends a message to a
+// thread. Exactly one of start and send.
+export type ReplyButtonStart = {
+  text: string;
+  title?: string;
+  cwd: string;
+  accountId?: string;
+  poolId?: string;
+  model?: string;
+  effort?: EffortLevel;
+  permissionMode: PermissionMode;
+  why?: string;
+};
+export type ReplyButtonSend = { threadId: string; threadTitle: string; text: string };
+export type ReplyButton = {
+  id: string;
+  title: string;
+  createdAt: string;
+  turnId?: string;
+  start?: ReplyButtonStart;
+  send?: ReplyButtonSend;
+  pressed?: { at: string; threadId: string };
+  failed?: { at: string; error: string };
+};
+
 // Persisted event bodies, without the envelope.
 export type EventBody =
   | { type: 'review.updated'; review: DesignReview }
+  | { type: 'button.updated'; button: ReplyButton }
   // origin is set only on messages the runner sent by itself (the resume
   // after a restart).
   | { type: 'user.message'; text: string; images: ImageRef[]; origin?: MessageOrigin; scheduleId?: string; reviewId?: string; reviewResponse?: ReviewDraft; answers?: AskAnswer[]; editOf?: number }
@@ -695,7 +752,10 @@ export type EventBody =
     }
   // The ticks on a card of asks, the whole set each time. Outside any turn.
   | { type: 'asks.ticked'; asksSeq: number; ticked: number[] }
-  | { type: 'system.note'; text: string }
+  // wake: a background task's notification that went into the running
+  // turn, which opens a turn that's had its end_turn again (needs.ts,
+  // takenEndTurn).
+  | { type: 'system.note'; text: string; wake?: true }
   | { type: 'error'; message: string }
   // A command action that ran (patches.ts): its output, truncated like a
   // tool result. Outside any turn.
@@ -755,6 +815,7 @@ export type AnyEvent = PersistedEvent | TransientEvent;
 
 export const PERSISTED_TYPES = new Set<string>([
   'review.updated',
+  'button.updated',
   'user.message',
   'assistant.text',
   'reasoning',

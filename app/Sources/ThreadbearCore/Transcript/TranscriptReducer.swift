@@ -1008,6 +1008,10 @@ public struct TranscriptModel: Sendable {
             if run.trigger == nil { pressedRuns.insert("t:\(itemId)") }
             append(TranscriptRow(id: "t:\(itemId)", seq: seq, turnId: turnId, content: .tool(ToolItem(itemId: itemId, call: call, result: result, root: root))))
 
+        case .buttonUpdated:
+            // No row: the reply that links it draws it (ReplyButtons).
+            break
+
         case .unknown:
             break
         }
@@ -1044,6 +1048,7 @@ public struct TranscriptModel: Sendable {
     static func isWork(_ row: TranscriptRow) -> Bool {
         switch row.content {
         case .tool(let tool): return !isTakenEndTurn(tool)
+        case .note where row.content.isWakeNote: return false
         case .reasoning, .note: return true
         case .approval(let item): return item.isAllowed
         default: return false
@@ -1174,12 +1179,6 @@ public struct TranscriptModel: Sendable {
     /// needs.ts, BULLETS_ONLY).
     private func reply(of turn: [Int]) -> Set<Int> {
         let text = textItem
-        // One reply: the agent's message after end_turn is the reply, and
-        // nothing else the turn wrote competes with it (docs/protocol.md,
-        // "One reply"). So a reply can't be lost to a narration block or a
-        // length rule, the reasons for everything below.
-        let finals = turn.filter { text($0)?.isFinal == true }
-        if !finals.isEmpty { return Set(finals) }
         // A message sent into the turn (the runner's "the app restarted")
         // starts a fresh answer, so only an end_turn after it ends this
         // one: on 30 Oct 2026 a restart landed between end_turn and the
@@ -1189,10 +1188,27 @@ public struct TranscriptModel: Sendable {
             if case .user = items[k].content { return true }
             return false
         }).map { $0 + 1 } ?? 0
-        let end = turn[fresh...].firstIndex { k in
+        // The last end_turn that gave a card, not one that only added
+        // archive or snooze ("Added: ..."). A second card after the same
+        // message only comes once a background task finishing has woken
+        // the agent (runner needs.ts, WakeRead), and the work after it is
+        // the turn's latest: on 7 Nov 2026 the report after a backgrounded
+        // `tb land` was refused, under a "landing now" card (thread 46de9389).
+        let end = turn[fresh...].lastIndex { k in
+            if case .tool(let tool) = items[k].content { return Self.isTakenEndTurn(tool) && tool.result?.text.hasPrefix("Added:") != true }
+            return false
+        } ?? turn[fresh...].firstIndex { k in
             if case .tool(let tool) = items[k].content { return Self.isTakenEndTurn(tool) }
             return false
         } ?? turn.count
+        // One reply: the agent's message after end_turn is the reply, and
+        // nothing else the turn wrote competes with it (docs/protocol.md,
+        // "One reply"). So a reply can't be lost to a narration block or a
+        // length rule, the reasons for everything below. One between the
+        // fresh answer's start and its last card belongs to a card that
+        // was replaced after a wake.
+        let finals = turn.indices.filter { p in text(turn[p])?.isFinal == true && !(fresh..<end).contains(p) }.map { turn[$0] }
+        if !finals.isEmpty { return Set(finals) }
         let beforeEnd = turn[..<end]
         // After the last step's row and after its result, as a message can
         // land between a call and its result. A message sent into the
@@ -1206,7 +1222,9 @@ public struct TranscriptModel: Sendable {
         let final = beforeEnd.filter { k in
             text(k).map { !$0.isSummary } == true && k > (steps.last ?? Int.min) && items[k].seq > lastResult
         }
-        if let summary = turn.last(where: { text($0)?.isSummary == true }) {
+        // The last card's own summary: one a wake replaced says what was
+        // true before it (from Codex's review).
+        if let summary = turn[(end < turn.count ? end : 0)...].last(where: { text($0)?.isSummary == true }) {
             // A narration block is only a paraphrase of what the agent
             // wrote, so it never beats the bullets: one about a list of 13
             // names for Paws showed instead of them (30 Oct 2026).
@@ -1246,8 +1264,26 @@ public struct TranscriptModel: Sendable {
     /// (the poster it was asked for is the answer), the footer and the card.
     /// The runner's messages fold in: they're how the work carried on. The
     /// note an edit of Mike's leaves stays, as it says what he did.
+    /// A background subagent's card still waiting (no tool of the agent's to
+    /// point at). It's drawn at the end of the transcript rather than where
+    /// it came in: it stays open across turns, so that spot can be folded
+    /// into a finished turn or scrolled far above the latest reply, and the
+    /// thread would sit in Needs you with nothing to answer in sight (7 Nov
+    /// 2026). Once answered it goes back to its place. In the turn it came
+    /// in, while that's running, its place is fine, and floating it would
+    /// split the run of work around it.
+    private func isFloatingCard(_ k: Int) -> Bool {
+        guard pendingCards[items[k].id] != nil else { return false }
+        if let turn = items[k].turnId, turn == openTurn { return false }
+        switch items[k].content {
+        case .approval(let item): return (item.request.itemId ?? "").isEmpty
+        case .question(let item): return (item.request.itemId ?? "").isEmpty
+        default: return false
+        }
+    }
+
     private func staysOut(_ k: Int, replies: Set<Int>) -> Bool {
-        if replies.contains(k) || items[k].id.hasPrefix("rw:") { return true }
+        if replies.contains(k) || items[k].id.hasPrefix("rw:") || items[k].content.isWakeNote { return true }
         switch items[k].content {
         case .user(let message): return !message.isFromRunner
         case .error, .footer, .asks, .review, .gap, .planCard: return true
@@ -1428,7 +1464,7 @@ public struct TranscriptModel: Sendable {
                 // Every row of a finished turn starts at its first item, so
                 // a change anywhere in it rebuilds it whole (runStart).
                 let replies = replies(in: turn)
-                let folded = turn.filter { !staysOut($0, replies: replies) }
+                let folded = turn.filter { !staysOut($0, replies: replies) && !isFloatingCard($0) }
                 // The line of work goes above the reply, even when the reply
                 // came first: a turn that only answered has its summary
                 // folded under it (reply(of:)).
@@ -1445,6 +1481,7 @@ public struct TranscriptModel: Sendable {
                 let gaps = dividers(in: turn, replies: replies)
                 for k in turn {
                     let row = items[k]
+                    if isFloatingCard(k) { continue }
                     if k == groupAt, let first = folded.first {
                         let lead = items[first]
                         let id = "g:" + lead.id
@@ -1506,6 +1543,10 @@ public struct TranscriptModel: Sendable {
                 i = turn.upperBound
                 continue
             }
+            if isFloatingCard(i) {
+                i += 1
+                continue
+            }
             if isWork(item) {
                 let runEnd = runEnd(i)
                 // A summarized turn's one message still folds away: the
@@ -1549,14 +1590,20 @@ public struct TranscriptModel: Sendable {
                 i += 1
             }
         }
+        let floating = workingLine ? pendingCards.keys.compactMap { itemIndex[$0] }.filter(isFloatingCard).sorted() : []
+        for k in floating {
+            out.append(items[k])
+            starts.append(items.count)
+        }
         if workingLine, let turn = openTurn, !pendingCards.values.contains(turn) {
             let status = WorkingStatus(turnId: turn, startedAt: turnStarts[turn])
             out.append(derived("w:" + turn, seq: lastSeq, turnId: turn, .working(status)))
             starts.append(items.count)
-        } else if workingLine, openTurn == nil, !background.isEmpty {
+        } else if workingLine, openTurn == nil, !background.isEmpty, floating.isEmpty {
             // Between turns with sub-agents or jobs still going: the thread
             // is still being worked on, and this says so where the working
-            // line would be.
+            // line would be. Not under a card a sub-agent is waiting on,
+            // where "working" would be wrong.
             out.append(derived("bg:", seq: lastSeq, turnId: nil, .background(BackgroundStatus(tasks: background))))
             starts.append(items.count)
         }

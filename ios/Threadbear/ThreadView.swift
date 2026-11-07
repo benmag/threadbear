@@ -41,6 +41,18 @@ struct ThreadView: View {
     /// Follow-ups ticked on the done card, and the reply it's under.
     @State private var nextPicks: Set<Int> = []
     @State private var nextPickedFor: Int?
+    /// A card's answer is on its way to the backend: it spins and can't be
+    /// pressed again. Uploading first can take a while.
+    @State private var sendingCard = false
+    /// That answer's command, watched to its end, as an older backend's
+    /// refusal comes after `taken`, when `sent` has already gone.
+    @State private var answeredCommand: String?
+    /// The card of asks, and the reply under a done card, that's been answered
+    /// from here. `sent` goes when the runner takes the message, which is before
+    /// the thread's row says so, and the card coming back live for that moment
+    /// could be pressed twice.
+    @State private var answeredAsks: Double?
+    @State private var answeredDone: Int?
     /// The working a work: link opened.
     @State private var workLink: ThreadLinks.Hit?
     @Environment(\.pushThread) private var pushThread
@@ -75,12 +87,19 @@ struct ThreadView: View {
                 menu(thread)
             }
         }
-        .hibernateDialog(for: $hibernateTarget)
+        .hibernateDialog(for: $hibernateTarget, leaving: { dismiss() })
         // model.connection in each id: a fresh Convex client after the app
         // comes back from the background, so these follow it, not the old one.
         .task(id: "\(threadId):\(model.connection)") { await follow() }
         .task(id: "\(threadId):\(limit):\(model.hasMessagePages):\(model.connection)") { await followMessages() }
         .task(id: "\(sent?.id ?? ""):\(model.connection)") { await followCommand() }
+        .task(id: answeredCommand) {
+            guard let id = answeredCommand, let status = await model.commandOutcome(id), status.state == .failed,
+                  answeredCommand == id else { return }
+            // Refused, even after the runner took it: its card comes back.
+            answeredAsks = nil
+            answeredDone = nil
+        }
         .task(id: "\(threadId):\(model.canSeeWaiting):\(model.connection)") { await followWaiting() }
     }
 
@@ -142,17 +161,21 @@ struct ThreadView: View {
                     }
                     if let pending = thread.pendingApproval {
                         PendingCard(threadId: thread.threadId, runnerId: thread.runnerId, pending: pending) { sent = ($0, nil) }
+                            // Its own state per question: a tapped button doesn't carry over to the next.
+                            .id(pending.id)
+                            .transition(Juice.cardGoes)
                     } else if thread.isBusy || thread.working != nil {
                         WorkingLine(text: thread.working)
                             .id("working:\(thread.status == .running)")
-                    } else if let asks = thread.asks, !asks.isEmpty, sent == nil, waiting.isEmpty {
-                        AsksCard(asks: asks, picks: $picks, busy: sent != nil) {
-                            Task { _ = await send("", to: thread) }
+                    } else if let asks = thread.asks, !asks.isEmpty, showsAsks(thread) {
+                        AsksCard(asks: asks, picks: $picks, busy: sendingCard) {
+                            sendCard(thread, lastSeq: messages.last?.seq)
                         }
                         .onChange(of: thread.asksSeq, initial: true) {
                             // A new card starts with nothing picked.
                             if pickedFor != thread.asksSeq { picks = [:]; pickedFor = thread.asksSeq }
                         }
+                        .transition(Juice.cardGoes)
                     } else if thread.status == .error {
                         Label("The last turn failed. Send a message to try again.", systemImage: "exclamationmark.triangle")
                             .font(.subheadline)
@@ -160,8 +183,8 @@ struct ThreadView: View {
                     } else if isDone(thread, messages: messages) {
                         // Ticked follow-ups go from the card's Send on their
                         // own; anything typed stays in the box for later.
-                        DoneCard(next: thread.next ?? [], picked: $nextPicks, busy: sent != nil) {
-                            Task { _ = await send("", to: thread) }
+                        DoneCard(next: thread.next ?? [], picked: $nextPicks, busy: sendingCard) {
+                            sendCard(thread, lastSeq: messages.last?.seq)
                         } archive: {
                             archive()
                         }
@@ -169,6 +192,7 @@ struct ThreadView: View {
                             // A new reply's card starts with nothing ticked.
                             if nextPickedFor != messages.last?.seq { nextPicks = []; nextPickedFor = messages.last?.seq }
                         }
+                        .transition(Juice.cardGoes)
                     }
                     if let note = sentNote {
                         Text(note).font(.footnote).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .trailing)
@@ -177,12 +201,15 @@ struct ThreadView: View {
                 }
                 .padding(.horizontal)
                 .padding(.top, 8)
+                // Only when the card changes: the rest of what comes in just appears.
+                .animation(Juice.card, value: cardShowing(thread, messages: messages))
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
             .environment(\.threadPictures, pictures)
             .environment(\.picturesWaitUntilSeen, true)
             .environment(\.threadLink) { url, seq in follow(url, from: seq, in: items) }
+            .environment(\.buttonThreadId, threadId)
             .sheet(item: $workLink) { WorkingSheet(link: $0).environment(\.threadPictures, pictures) }
             .onChange(of: messages.last?.seq) { proxy.scrollTo("bottom", anchor: .bottom) }
             // The first page takes over from phone:thread's newest text
@@ -224,16 +251,24 @@ struct ThreadView: View {
         case nil:
             // A relative link (`[plan](shorts-plan/candidates.md)`) is a
             // file in the thread's folder on the Mac; iOS can't open it.
-            guard url.scheme != nil else {
+            guard url.scheme != nil, !url.isFileURL else {
                 model.report(TransportError.server("That file opens on the Mac."))
                 return .handled
             }
-            return .systemAction
+            // A web page, or another app's link only once Mike says yes.
+            return LinkGate.shared.decide(url)
         case let .thread(id):
             // Agents may give only the start of the id.
             pushThread(model.inbox.first { $0.threadId.hasPrefix(id) }?.threadId ?? id)
         case .review:
             model.report(TransportError.server("That review opens on the Mac."))
+        case let .button(id):
+            // One partway through a line, drawn as a link (ReplyButtons.trailing
+            // only takes the ones at the end). An id the row doesn't carry is
+            // just its words.
+            let buttons = (page?.messages ?? detail?.messages ?? []).first { $0.seq == seq }?.buttons ?? []
+            guard let button = buttons.first(where: { $0.id == id }) else { return .discarded }
+            model.tap(button, in: threadId, pushThread: pushThread)
         case let .step(quote):
             guard let hit = ThreadLinks.find(quote: quote, from: seq, in: items) else { return .discarded }
             workLink = hit
@@ -295,6 +330,9 @@ struct ThreadView: View {
         }
         if status?.state == .failed {
             gone.removeAll { $0.id == send.id }
+            // Refused after the runner took it: a card it answered comes back.
+            answeredAsks = nil
+            answeredDone = nil
             guard status?.note != "Cancelled" else { return }
             // The last one sent from here already says so under the transcript.
             if sent?.id != send.commandId {
@@ -321,6 +359,9 @@ struct ThreadView: View {
                     // Gone from the list straight away rather than on the next update.
                     waiting.removeAll { $0.id == send.id }
                     if sent?.id == send.commandId { sent = nil }
+                    // Taken back, so a card it answered is there again.
+                    answeredAsks = nil
+                    answeredDone = nil
                     if draft.isEmpty { draft = send.text }
                 } else {
                     model.report(TransportError.server("Too late to cancel: it's already gone to the Mac."))
@@ -425,15 +466,59 @@ struct ThreadView: View {
             for try await status in backend.command(id) {
                 guard sent?.id == id else { return }
                 sent?.status = status
+                if status?.state == .failed {
+                    // Its card comes back, with why under it.
+                    answeredAsks = nil
+                    answeredDone = nil
+                }
                 if status?.state == .done || status?.state == .taken { sent = nil; return }
             }
         } catch {}
     }
 
+    /// Nothing's on its way that would replace a card. A refused one doesn't
+    /// count: it says why under the transcript, and the card's there to try again.
+    private var nothingOnItsWay: Bool {
+        (sent == nil || sent?.status?.state == .failed) && waiting.isEmpty
+    }
+
+    private func showsAsks(_ thread: PhoneThread) -> Bool {
+        nothingOnItsWay && (answeredAsks == nil || answeredAsks != thread.asksSeq)
+    }
+
     /// A finished turn that needs nothing from Mike: the done card's place.
     private func isDone(_ thread: PhoneThread, messages: [PhoneMessage]) -> Bool {
         thread.status == .idle && !thread.needsYou && thread.archivedAt == nil && thread.working == nil
-            && messages.last?.role == .assistant && sent == nil && waiting.isEmpty
+            && messages.last?.role == .assistant && nothingOnItsWay
+            && (answeredDone == nil || answeredDone != messages.last?.seq)
+    }
+
+    /// Which card is showing, so it's only that changing that animates.
+    private func cardShowing(_ thread: PhoneThread, messages: [PhoneMessage]) -> String {
+        if let pending = thread.pendingApproval { return pending.id }
+        if thread.isBusy || thread.working != nil { return "working" }
+        if !(thread.asks ?? []).isEmpty, showsAsks(thread) { return "asks" }
+        return isDone(thread, messages: messages) ? "done" : "none"
+    }
+
+    /// A tap on a card of asks' answer, or Send on either card. Spinning from
+    /// the tap, and a single ask's chip goes back if it couldn't be sent.
+    private func sendCard(_ thread: PhoneThread, lastSeq: Int?) {
+        guard !sendingCard else { return }
+        sendingCard = true
+        Task {
+            // No deadline here, unlike an approval: a second tap after one
+            // would send the message twice, as nothing on the backend joins
+            // them up. Leaving the thread and coming back resets it.
+            defer { sendingCard = false }
+            if await send("", to: thread) {
+                answeredAsks = thread.asksSeq
+                answeredDone = lastSeq
+                answeredCommand = sent?.id
+            } else if thread.asks?.count == 1 {
+                picks = [:]
+            }
+        }
     }
 
     /// Sends what's typed, with any answers picked on the card of asks
@@ -675,7 +760,7 @@ struct MessageView: View {
             .padding(.leading, 40)
         case .assistant:
             VStack(alignment: .leading, spacing: 8) {
-                MarkdownText(message.text, seq: message.seq)
+                MarkdownText(message.text, seq: message.seq, buttons: message.buttons)
                     .textSelection(.enabled)
                 ForEach(pinned) { PinnedPicture(image: $0) }
             }
@@ -845,17 +930,43 @@ struct MarkdownText: View {
     let blocks: [MarkdownBlock]
     /// The message's seq, which says which upload a picture's address means.
     var seq: Int?
+    /// The reply buttons the message links (backend API 59). Nil: its button
+    /// links are just their titles.
+    var buttons: [MessageButton]?
     @Environment(\.threadPictures) private var pictures
     @Environment(\.threadLink) private var threadLink
 
-    init(_ text: String, seq: Int? = nil) {
+    init(_ text: String, seq: Int? = nil, buttons: [MessageButton]? = nil) {
         blocks = MarkdownBlock.parse(text)
         self.seq = seq
+        self.buttons = buttons
     }
 
-    init(blocks: [MarkdownBlock], seq: Int? = nil) {
+    init(blocks: [MarkdownBlock], seq: Int? = nil, buttons: [MessageButton]? = nil) {
         self.blocks = blocks
         self.seq = seq
+        self.buttons = buttons
+    }
+
+    /// A line's words, then the buttons it ends with as real buttons. A
+    /// button link whose id the row doesn't carry is its title, as text.
+    @ViewBuilder private func line(_ written: String) -> some View {
+        let text = ReplyButtons.unlinking(written, except: Set((buttons ?? []).map(\.id)))
+        let split = ReplyButtons.trailing(in: text)
+        if split.links.isEmpty {
+            Text(Self.inline(text))
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                if !split.text.isEmpty { Text(Self.inline(split.text)) }
+                FlowLayout(spacing: 6) {
+                    ForEach(split.links, id: \.id) { link in
+                        if let button = buttons?.first(where: { $0.id == link.id }) {
+                            ReplyButtonPill(button: button)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     var body: some View {
@@ -870,7 +981,7 @@ struct MarkdownText: View {
     @ViewBuilder private func view(for block: MarkdownBlock) -> some View {
         switch block {
         case let .paragraph(text):
-            Text(Self.inline(text))
+            line(text)
         case let .heading(level, text):
             Text(Self.inline(text)).font(level <= 2 ? .headline : .subheadline.weight(.semibold))
         case let .listItem(text, marker, depth, task):
@@ -880,7 +991,7 @@ struct MarkdownText: View {
                 } else {
                     Text(marker).foregroundStyle(.secondary).monospacedDigit()
                 }
-                Text(Self.inline(text))
+                line(text)
             }
             .padding(.leading, CGFloat(depth) * 18)
         case let .code(text):
@@ -894,7 +1005,7 @@ struct MarkdownText: View {
         case let .draft(draft):
             DraftBlockView(draft: draft)
         case let .quote(inner):
-            MarkdownText(blocks: inner, seq: seq)
+            MarkdownText(blocks: inner, seq: seq, buttons: buttons)
                 .foregroundStyle(.secondary)
                 .padding(.leading, 12)
                 .overlay(alignment: .leading) {
@@ -986,10 +1097,12 @@ private struct StepLine: ViewModifier {
 extension EnvironmentValues {
     /// What a tap on a link in message `seq` does, set by the open thread.
     /// Outside one, the system opens it.
-    @Entry var threadLink: @MainActor (URL, Int?) -> OpenURLAction.Result = { _, _ in .systemAction }
+    @Entry var threadLink: @MainActor (URL, Int?) -> OpenURLAction.Result = { url, _ in LinkGate.shared.decide(url) }
     @Entry var litStep: Int?
     /// Opens a thread on top of this one, so Back comes back here.
     @Entry var pushThread: @MainActor (String) -> Void = { _ in }
+    /// The open thread, whose reply buttons a tap presses. Nil outside one.
+    @Entry var buttonThreadId: String?
 }
 
 extension ThreadLinks.Hit: Identifiable {

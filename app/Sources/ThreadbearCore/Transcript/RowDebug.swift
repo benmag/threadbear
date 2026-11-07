@@ -202,7 +202,7 @@ public enum TokenText {
     /// no counts.
     public static func line(_ usage: JSONValue?) -> String? {
         guard let usage else { return nil }
-        func count(_ key: String) -> Int? { usage[key]?.doubleValue.map { Int($0) } }
+        func count(_ key: String) -> Int? { usage[key]?.doubleValue.flatMap { $0.wholeCount() } }
         var parts: [String] = []
         if let input = count("inputTokens") {
             var part = format(input) + " in"

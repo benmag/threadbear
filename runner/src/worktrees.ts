@@ -20,6 +20,10 @@ export type WorktreeRecord = {
   branch: string; // "thread/<id8>"
   base: string; // main's commit when it was made
   removedAt?: string; // cleaned up when the thread was archived
+  // Archived, and the cleanup hasn't had its say yet: it waits for the CLI and
+  // turn-end hooks, so a runner stopping or crashing can come first. The next
+  // runner does it (settleLostCleanups).
+  cleanupOwed?: boolean;
   // The patch's worktree.keep: the folder is set aside for another thread
   // when this one's done with it, rather than removed (see "spares").
   keep?: string[];

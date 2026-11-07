@@ -869,6 +869,29 @@ public struct ProjectUpdate: Sendable, Hashable {
         if let notion { params["notion"] = .string(notion) }
         return params
     }
+
+    /// The project as it will be once the runner has made this change, so
+    /// a save shows straight away however slow the runner is. Its reply
+    /// replaces the guess. A different Notion page has a board nobody has
+    /// read yet, so the old one goes.
+    public func applied(to project: Project, now: Date = Date()) -> Project {
+        var project = project
+        if let title, !title.isEmpty { project.title = title }
+        if let folders { project.folders = folders }
+        if let goals { project.goals = goals }
+        if let state {
+            project.state = state
+            project.stateUpdatedAt = now
+        }
+        if let notes { project.notes = notes }
+        if let archived { project.archived = archived }
+        if let notion {
+            let link = notion.isEmpty ? nil : notion
+            if link != project.notion { project.tasks = nil }
+            project.notion = link
+        }
+        return project
+    }
 }
 
 public struct SetProjectsRequest: Sendable, Hashable {

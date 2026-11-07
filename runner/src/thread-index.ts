@@ -132,6 +132,8 @@ export class ThreadIndex {
     // then writes only what changed, and doesn't read every row to prune.
     seed?: () => { at: number; rows: Record<string, string>; removed?: string[]; archived?: boolean } | undefined;
     onSent?: () => void;
+    // A thread finishing on the release that handed over (sync.ts SyncDeps).
+    elsewhere?: (threadId: string) => boolean;
   };
   private running = false;
   private sent = new Map<string, string>(); // threadId -> writeKey as sent
@@ -186,6 +188,14 @@ export class ThreadIndex {
       this.full = false;
       const here = new Set(this.deps.host.list(['inbox', 'snoozed', 'archived']).map((t) => t.id));
       for (const id of seed.removed ?? []) if (!here.has(id)) this.removed.add(id);
+      // One the file says is up whose thread isn't here (nor finishing on the
+      // release before): deleted while sync wasn't listening. A start from the
+      // file has no full write to drop it. Written again if it turns up.
+      for (const id of [...this.sent.keys()]) {
+        if (here.has(id) || this.deps.elsewhere?.(id)) continue;
+        this.sent.delete(id);
+        this.removed.add(id);
+      }
     }
     for (const t of this.deps.host.list(['inbox', 'snoozed', 'archived'])) this.mark(t);
     this.unlisten = this.deps.host.onNotification((n) => {

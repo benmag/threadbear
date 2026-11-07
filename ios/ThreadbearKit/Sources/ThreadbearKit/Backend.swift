@@ -62,6 +62,9 @@ public protocol Backend: Sendable {
     /// Takes back a photo that was uploaded and then never sent (backend API 25).
     func discardPhoto(_ storageId: String) async throws
     func respond(threadId: String, approvalId: String, decision: ApprovalOption) async throws -> String
+    /// Presses a reply button (backend API 59): queues it for the thread's
+    /// runner, which presses it once however many times it's asked.
+    func press(threadId: String, buttonId: String) async throws -> String
     /// Answers keyed by question text, several choices joined with ", ",
     /// as the Mac app sends them. `summary` goes in the transcript.
     func answer(threadId: String, approvalId: String, answers: [String: String], summary: String) async throws -> String
@@ -289,6 +292,10 @@ public final class ConvexBackend: Backend, @unchecked Sendable {
             args["answers"] = .array(answers.map { .object(["action": .string($0.action), "answer": .string($0.answer)]) })
         }
         return try await command("phone:send", args)
+    }
+
+    public func press(threadId: String, buttonId: String) async throws -> String {
+        try await command("phone:press", ["threadId": .string(threadId), "buttonId": .string(buttonId)])
     }
 
     public func respond(threadId: String, approvalId: String, decision: ApprovalOption) async throws -> String {

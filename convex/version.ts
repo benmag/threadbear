@@ -260,4 +260,16 @@
 //    the same runner order the phone sets (API 56), for the Mac's Settings >
 //    Runners. An older runner sends the Mac no order, and its Settings list
 //    the runners as before.
-export const API_VERSION = 58;
+// 59: reply buttons (docs/protocol.md, "Reply buttons"). A message row can
+//    carry `buttons`, the state of the buttons its text links ([title](button:<id>)),
+//    which the runner sends again when one is pressed (appendMessages patches
+//    just them); phone:messages returns them, and phone:press queues a `press`
+//    command with { buttonId }. An older runner sends none and fails a press
+//    as unknown; an older phone shows the link as text.
+// 60: sync:sharedThreads, the ids of a runner's rows shared by link, which a
+//    runner checks against its own threads on every start and every hour,
+//    removing ones it deleted and rewriting ones it stopped sharing. And a
+//    runner key can't save a schedule under an id gone from another runner
+//    within the day (scheduleGone). An older runner never asks, and does
+//    as before.
+export const API_VERSION = 60;

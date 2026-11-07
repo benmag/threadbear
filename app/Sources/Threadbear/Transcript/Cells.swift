@@ -26,7 +26,7 @@ protocol RowCellDelegate: AnyObject {
     /// A click on an asks card: `tick:<index>` or `reply:<index>`.
     func askAction(_ card: AsksCard, action: String)
     /// An ask's Something else box on the open card (AskAnswerBox): what's
-    /// in it changed, pictures were added to it, or Return sent.
+    /// in it changed, or pictures were added to it.
     func askNoteChanged(_ card: AsksCard, ask: Int, note: AskNote)
     func askNoteImages(_ card: AsksCard, ask: Int, urls: [URL])
     /// Pictures pasted, dropped or chosen in a box go in as chips: whether
@@ -34,7 +34,13 @@ protocol RowCellDelegate: AnyObject {
     func askPicturesAllowed(_ card: AsksCard) -> Bool
     func askImportPicture(_ card: AsksCard, url: URL) async -> ImageRef?
     func sendAnswers(_ card: AsksCard)
+    /// Return in ask `ask`'s box: on to the next unanswered ask, or send
+    /// (⌘Return, or nothing left unanswered).
+    func answerBoxReturn(_ card: AsksCard, ask: Int, command: Bool)
     func openReview(_ review: DesignReview)
+    /// Whether a "Woke up" note should play its bear waking up: only the
+    /// thread's newest, once, the first time it's seen after waking.
+    func claimWakeUp(rowId: String) -> Bool
     /// The pencil by one of Mike's messages: edit it and carry on from
     /// there (docs/protocol.md, "Editing a message").
     func editMessage(rowId: String)
@@ -48,10 +54,13 @@ protocol RowCellDelegate: AnyObject {
     /// For a thread on another runner ("bruce"): its pictures are files
     /// on that Mac, fetched through this. Nil for this Mac's own.
     var remoteImages: RemoteImages? { get }
+    /// The thread the row is in, which its links are followed in.
+    var linkThreadId: String? { get }
 }
 
 extension RowCellDelegate {
     var remoteImages: RemoteImages? { nil }
+    var linkThreadId: String? { nil }
     func secretState(_ approvalId: String) -> SecretCardState { .ready }
     func isAnswering(_ approvalId: String) -> Bool { false }
     func answerSecret(approvalId: String, _ answer: SecretAnswer) {}
@@ -61,7 +70,9 @@ extension RowCellDelegate {
     func askPicturesAllowed(_ card: AsksCard) -> Bool { false }
     func askImportPicture(_ card: AsksCard, url: URL) async -> ImageRef? { nil }
     func sendAnswers(_ card: AsksCard) {}
+    func answerBoxReturn(_ card: AsksCard, ask: Int, command: Bool) {}
     func openReview(_ review: DesignReview) {}
+    func claimWakeUp(rowId: String) -> Bool { false }
     func editMessage(rowId: String) {}
     func openThreadLink(_ url: URL, fromRow rowId: String) {}
     func approvePlan(itemId: String) {}
@@ -125,6 +136,8 @@ class RowCellView: NSTableCellView {
         super.prepareForReuse()
         pointer = nil
         updateHover()
+        // A recycled cell mustn't carry a lift on to some other row.
+        layer?.removeAnimation(forKey: SendLift.key)
     }
 
     #if DEBUG
@@ -269,6 +282,9 @@ final class TextRowCell: RowCellView {
     let phoneMark = NSButton()
     private var editable = false
     private var pointerInside = false
+    /// Left of the words of a "Woke up" note. Made the first time one's
+    /// shown, as hardly any text rows ever need it.
+    private var wokenBear: WokenBearView?
     /// The open card's Something else boxes, by ask, over the room its
     /// text leaves for them; kept while the cell is, so typing in one
     /// survives the card being laid out again around it.
@@ -345,6 +361,31 @@ final class TextRowCell: RowCellView {
         super.prepareForReuse()
         pointerInside = false
         updateEdit()
+    }
+
+    private func placeWokenBear(_ row: TranscriptRow, x: CGFloat, width: CGFloat, textSize: NSSize, changedRow: Bool) {
+        guard row.content.isWakeNote else {
+            if let wokenBear, !wokenBear.isHidden {
+                wokenBear.settle()
+                wokenBear.isHidden = true
+            }
+            return
+        }
+        let bear = wokenBear ?? {
+            let bear = WokenBearView()
+            addSubview(bear)
+            wokenBear = bear
+            return bear
+        }()
+        bear.isHidden = false
+        bear.tint = Theme.quietText
+        bear.hat = BearGeometry.wearsHat()
+        let side = RowMetrics.wokenBearSide
+        // Level with the first line, whatever the row's grown to.
+        let line = TypeScale.scaled(17)
+        bear.frame = NSRect(x: x + (width - textSize.width) / 2 - RowMetrics.wokenBearRoom, y: RowMetrics.rowTop + (line - side) / 2, width: side, height: side)
+        if changedRow { bear.settle() }
+        if delegate?.claimWakeUp(rowId: row.id) == true { bear.wakeUp() }
     }
 
     private func updateEdit() {
@@ -477,6 +518,7 @@ final class TextRowCell: RowCellView {
             textView.place(NSRect(x: x, y: top, width: width, height: render.textSize.height))
         }
 
+        placeWokenBear(row, x: x, width: width, textSize: render.textSize, changedRow: previousRowId != row.id)
         updateEdit()
         // A message the runner hasn't shown yet is drawn faded.
         let alpha: CGFloat = pending == nil ? 1 : 0.5
@@ -600,6 +642,87 @@ final class TextRowCell: RowCellView {
         for (index, button) in explainButtons where !shown.contains(index) && !button.isHidden { button.isHidden = true }
     }
 
+    /// Where the page number of a paged card's "‹ 2 of 3 ›" is drawn, in this
+    /// view. It's the first number in the text, on the heading line.
+    func pageNumberRect() -> NSRect? {
+        guard let storage = textView.textStorage, let layoutManager = textView.layoutManager, let container = textView.textContainer,
+              let range = RowRenderer.pageNumberRange(in: storage.string) else { return nil }
+        layoutManager.ensureLayout(for: container)
+        let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        let rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: container)
+        let full = textView.fullFrame
+        let origin = textView.textContainerOrigin
+        return rect.offsetBy(dx: full.minX + origin.x, dy: full.minY + origin.y)
+    }
+
+    /// The done card's tick draws itself on, as the sidebar row's does. The
+    /// tick is an attachment in the text, which can't animate, so a view of
+    /// the very same picture takes its exact place, revealed along the tick's
+    /// stroke, and the text's own is see-through until that's done. The same
+    /// picture so its green is the card's, and so nothing jumps at the swap:
+    /// the symbol effect, tried first, drew a slightly different tick.
+    func drawDoneTickOn() {
+        guard let storage = textView.textStorage, storage.length > 0,
+              let layoutManager = textView.layoutManager, let container = textView.textContainer,
+              let tick = storage.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment,
+              let image = tick.image else { return }
+        layoutManager.ensureLayout(for: container)
+        let glyph = layoutManager.glyphIndexForCharacter(at: 0)
+        let line = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let at = layoutManager.location(forGlyphAt: glyph)
+        let full = textView.fullFrame
+        let origin = textView.textContainerOrigin
+        let size = tick.bounds.size
+        // A flipped text view: the attachment's picture sits on the line's
+        // baseline, whatever its bounds and the line's offset say. Filmed
+        // against the text's own, as it hops at the swap if this is out.
+        let view = NSImageView(frame: NSRect(x: full.minX + origin.x + line.minX + at.x,
+                                             y: full.minY + origin.y + line.minY + at.y - size.height,
+                                             width: size.width, height: size.height))
+        view.image = image
+        view.imageScaling = .scaleNone
+        view.wantsLayer = true
+        addSubview(view)
+        let clear = NSTextAttachment()
+        clear.image = NSImage(size: size)
+        clear.bounds = tick.bounds
+        storage.addAttribute(.attachment, value: clear, range: NSRange(location: 0, length: 1))
+        // The stroke of a tick, wide enough to uncover all of it by the end.
+        let stroke = CAShapeLayer()
+        stroke.frame = view.bounds
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: 0, y: size.height * 0.45))
+        path.addLine(to: CGPoint(x: size.width * 0.36, y: size.height * 0.1))
+        path.addLine(to: CGPoint(x: size.width, y: size.height))
+        stroke.path = path
+        stroke.fillColor = nil
+        stroke.strokeColor = NSColor.black.cgColor
+        stroke.lineWidth = size.height * 0.7
+        stroke.lineCap = .butt
+        stroke.lineJoin = .round
+        stroke.isGeometryFlipped = view.isFlipped
+        view.layer?.mask = stroke
+        let draw = CABasicAnimation(keyPath: "strokeEnd")
+        draw.fromValue = 0
+        draw.toValue = 1
+        draw.beginTime = CACurrentMediaTime() + Self.tickDelay
+        draw.duration = Self.tickDraw
+        draw.fillMode = .backwards
+        draw.timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0, 0.2, 1)
+        stroke.add(draw, forKey: "draw")
+        // The text's own comes back under it, then the view goes.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.tickDelay + Self.tickDraw + 0.02) { [weak self, weak view, weak storage] in
+            defer { view?.removeFromSuperview() }
+            guard let self, let storage, storage.length > 0,
+                  storage.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment === clear else { return }
+            storage.addAttribute(.attachment, value: tick, range: NSRange(location: 0, length: 1))
+            self.textView.needsDisplay = true
+        }
+    }
+
+    private static let tickDelay: CFTimeInterval = 0.04
+    private static let tickDraw: CFTimeInterval = 0.26
+
     private func makeExplainButton(_ index: Int) -> NSButton {
         let button = PointerButton()
         button.isBordered = false
@@ -640,9 +763,9 @@ final class TextRowCell: RowCellView {
                 guard let self, let card = self.answerCard else { return nil }
                 return await self.delegate?.askImportPicture(card, url: url)
             })
-        box.onSend = { [weak self] in
+        box.onReturn = { [weak self] command in
             guard let self, let card = self.answerCard else { return }
-            self.delegate?.sendAnswers(card)
+            self.delegate?.answerBoxReturn(card, ask: index, command: command)
         }
         answerBoxes[index] = box
         addSubview(box)
@@ -1012,6 +1135,7 @@ final class WorkingRowCell: RowCellView {
 
     private func startIfVisible() {
         guard window != nil else { return }
+        bear.hat = BearGeometry.wearsHat()
         // A turn that's only just begun gets the bear popping up; scrolling
         // back to one that's been going a while doesn't.
         bear.start(fresh: startedAt.map { Date().timeIntervalSince($0) < 2 } ?? false)
@@ -1513,6 +1637,8 @@ final class PlanCardCell: RowCellView {
     let goAhead = PillButton(pill: "Go ahead", prominent: true)
     let sendBack = PillButton(pill: "Send back…")
     let toggle = PointerButton()
+    /// Go ahead is on its way (ThreadSession.answering).
+    let spinner = Spinner.make()
     private var itemId = ""
 
     override init(frame frameRect: NSRect) {
@@ -1527,7 +1653,7 @@ final class PlanCardCell: RowCellView {
         status.textColor = .secondaryLabelColor
         status.alignment = .right
         status.lineBreakMode = .byTruncatingTail
-        [card, titleView, status, info, bodyView, goAhead, sendBack, toggle].forEach(addSubview)
+        [card, titleView, status, info, bodyView, goAhead, sendBack, toggle, spinner].forEach(addSubview)
         goAhead.setTip("Approve the plan and let it start")
         sendBack.setTip("Tell it what to change; it plans again")
     }
@@ -1566,13 +1692,17 @@ final class PlanCardCell: RowCellView {
         y += render.detailSize.height + zoomed(12)
 
         let waiting = plan.state == .waiting
+        let busy = waiting && delegate?.isAnswering(plan.itemId) == true
         var buttonX = left
         for button in [goAhead, sendBack] {
             button.isHidden = !waiting
             guard waiting else { continue }
+            button.isEnabled = !busy
             button.frame = NSRect(x: buttonX, y: y, width: max(zoomed(76), button.fittingWidth), height: RowMetrics.buttonHeight)
             buttonX = button.frame.maxX + zoomed(8)
         }
+        Spinner.show(spinner, busy, at: NSPoint(x: buttonX + zoomed(2), y: y + RowMetrics.buttonHeight / 2))
+        if busy { buttonX += zoomed(22) }
         let clipped = PlanCardText.preview(PlanCardText.split(plan.text).body).clipped
         let title: String? = !plan.entries.isEmpty ? (expanded ? "Hide plan" : "Show plan") : clipped ? (expanded ? "Show less" : "Show full plan") : nil
         toggle.isHidden = title == nil

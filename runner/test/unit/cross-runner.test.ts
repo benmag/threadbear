@@ -230,3 +230,13 @@ test('answering on the main Mac: a refusal before anything reached the other mac
   await assert.rejects(g.cross.answer('c', 'req-9', true, undefined, fingerprint(row)), /may still/);
   assert.equal(g.rows.get('req-9')!.state, 'claimed');
 });
+
+// Codex review, 7 Nov 2026: a main runner from before Plan first drops a mode
+// it doesn't know from a request, and starts the thread on full access.
+test('on a runner key: Plan first is filed as Ask', async () => {
+  const f = fake({ owner: false, self: { id: 'cloud1', name: 'Hetzner Cloud' } });
+  void f.cross.start('cloud-thread', { runner: 'main', text: 'Look first.', permissionMode: 'plan' });
+  await new Promise((r) => setImmediate(r));
+  assert.equal([...f.rows.values()][0]!.permissionMode, 'ask');
+  assert.equal(f.input()!.permissionMode, 'ask', 'and the card says so');
+});

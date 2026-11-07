@@ -93,6 +93,14 @@ public enum SlashPalette {
         }
     }
 
+    /// A command's description as it should read. Skills write theirs
+    /// with inline markdown (`computercub`, **bold**), so that's rendered,
+    /// on the one paragraph it came as. What won't parse stays as written.
+    public static func description(_ text: String) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+    }
+
     /// A path to show: the home folder as ~.
     public static func shortPath(_ path: String, home: String = NSHomeDirectory()) -> String {
         path == home || path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path

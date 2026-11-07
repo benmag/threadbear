@@ -352,7 +352,7 @@ public struct PhoneThread: Codable, Sendable, Hashable, Identifiable {
     /// the oldest the phone has. False when the runner doesn't say.
     public func hasEarlier(than oldestSeq: Int?) -> Bool {
         guard let earliestSeq, let oldestSeq else { return false }
-        return oldestSeq > Int(earliestSeq)
+        return Double(oldestSeq) > earliestSeq
     }
 
     /// The last folder name, for a thread in no project: "misc".
@@ -525,9 +525,12 @@ public struct PhoneMessage: Codable, Sendable, Hashable, Identifiable {
     /// On the first row of a turn the agent started by itself: the
     /// sub-agents and jobs whose finishing woke it (backend API 33).
     public var wokeBy: [WokeTask]?
+    /// The reply buttons its text links as `[title](button:<id>)`, as they
+    /// are now (backend API 59, ReplyButtons.swift).
+    public var buttons: [MessageButton]?
     @FlexibleDate public var at: Date
 
-    public init(seq: Int, role: Role, text: String, origin: String? = nil, toolKind: String? = nil, summary: Bool = false, turn: String? = nil, wokeBy: [WokeTask]? = nil, at: Date) {
+    public init(seq: Int, role: Role, text: String, origin: String? = nil, toolKind: String? = nil, summary: Bool = false, turn: String? = nil, wokeBy: [WokeTask]? = nil, buttons: [MessageButton]? = nil, at: Date) {
         self.seq = seq
         self.role = role
         self.text = text
@@ -536,15 +539,19 @@ public struct PhoneMessage: Codable, Sendable, Hashable, Identifiable {
         self.summary = summary
         self.turn = turn
         self.wokeBy = wokeBy
+        self.buttons = buttons
         self._at = FlexibleDate(wrappedValue: at)
     }
 
-    private enum Keys: String, CodingKey { case seq, role, text, origin, toolKind, summary, turn, wokeBy, at }
+    private enum Keys: String, CodingKey { case seq, role, text, origin, toolKind, summary, turn, wokeBy, buttons, at }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         // Convex numbers are float64, so seq comes back as 12.0.
-        seq = Int(try c.decode(Double.self, forKey: .seq))
+        guard let seq = try c.decode(Double.self, forKey: .seq).wholeCount() else {
+            throw DecodingError.dataCorruptedError(forKey: .seq, in: c, debugDescription: "Not a seq")
+        }
+        self.seq = seq
         role = try c.decode(Role.self, forKey: .role)
         text = try c.decode(String.self, forKey: .text)
         origin = try c.decodeIfPresent(String.self, forKey: .origin)
@@ -552,6 +559,7 @@ public struct PhoneMessage: Codable, Sendable, Hashable, Identifiable {
         summary = (try? c.decodeIfPresent(Bool.self, forKey: .summary)).flatMap { $0 } ?? false
         turn = try? c.decodeIfPresent(String.self, forKey: .turn)
         wokeBy = (try? c.decodeIfPresent([WokeTask].self, forKey: .wokeBy)).flatMap { $0 }
+        buttons = (try? c.decodeIfPresent([MessageButton].self, forKey: .buttons)).flatMap { $0 }
         _at = try c.decode(FlexibleDate.self, forKey: .at)
     }
 
@@ -565,6 +573,7 @@ public struct PhoneMessage: Codable, Sendable, Hashable, Identifiable {
         if summary { try c.encode(true, forKey: .summary) }
         try c.encodeIfPresent(turn, forKey: .turn)
         try c.encodeIfPresent(wokeBy, forKey: .wokeBy)
+        try c.encodeIfPresent(buttons, forKey: .buttons)
         try c.encode(_at, forKey: .at)
     }
 }
@@ -758,10 +767,15 @@ public struct PhoneIdentity: Codable, Sendable, Hashable {
     /// The backend's API version (convex/version.ts). Missing from backends
     /// deployed before there was one.
     public var apiVersion: Int?
-    public init(name: String, expiresAt: Date?, apiVersion: Int? = nil) {
+    /// The backend can't send notifications (a self-hosted one, which the
+    /// push relay doesn't reach: docs/self-hosting.md). Missing means it can.
+    public var pushOff: Bool?
+    public var sendsNotifications: Bool { pushOff != true }
+    public init(name: String, expiresAt: Date?, apiVersion: Int? = nil, pushOff: Bool? = nil) {
         self.name = name
         self._expiresAt = OptionalFlexibleDate(wrappedValue: expiresAt)
         self.apiVersion = apiVersion
+        self.pushOff = pushOff
     }
 }
 
@@ -873,8 +887,8 @@ public struct PhoneCounts: Codable, Sendable, Hashable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
-        hibernating = Int((try? c.decodeIfPresent(Double.self, forKey: .hibernating)).flatMap { $0 } ?? 0)
-        den = Int((try? c.decodeIfPresent(Double.self, forKey: .den)).flatMap { $0 } ?? 0)
+        hibernating = (try? c.decodeIfPresent(Double.self, forKey: .hibernating)).flatMap { $0 }?.wholeCount() ?? 0
+        den = (try? c.decodeIfPresent(Double.self, forKey: .den)).flatMap { $0 }?.wholeCount() ?? 0
     }
 
     public func encode(to encoder: Encoder) throws {

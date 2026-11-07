@@ -19,6 +19,9 @@ enum RowMetrics {
     /// One line of work: a group summary, a tool call, a thinking block.
     static var workHeight: CGFloat { zoomed(32) }
     static var workingHeight: CGFloat { zoomed(34) }
+    /// The bear beside a "Woke up" note, and all the room it takes.
+    static var wokenBearSide: CGFloat { zoomed(18) }
+    static var wokenBearRoom: CGFloat { wokenBearSide + zoomed(6) }
     static var bubblePadH: CGFloat { zoomed(14) }
     static var bubblePadV: CGFloat { zoomed(10) }
     static var bubbleRadius: CGFloat { zoomed(18) }
@@ -176,9 +179,9 @@ final class RenderCache: @unchecked Sendable {
     /// a render depends on: tables of different widths with the column at
     /// its widest share renders, so a sidebar drag or a scroller appearing
     /// costs nothing.
-    static func key(_ row: TranscriptRow, expanded: Bool, showAll: Bool = false, width: CGFloat) -> NSString {
+    static func key(_ row: TranscriptRow, expanded: Bool, showAll: Bool = false, width: CGFloat, localPictures: Bool = true) -> NSString {
         let open = openLevel(row, expanded: expanded, showAll: showAll)
-        return "\(row.id)|\(row.version)|\(open)|\(row.inGroup ? 1 : 0)|\(Int(RowMetrics.column(tableWidth: width).width))|\(TypeScale.percent)|\(richStamp(row))" as NSString
+        return "\(row.id)|\(row.version)|\(open)|\(row.inGroup ? 1 : 0)|\(Int(RowMetrics.column(tableWidth: width).width))|\(TypeScale.percent)|\(richStamp(row))|\(buttonStamp(row))\(localPictures ? "" : "|away")" as NSString
     }
 
     /// A reply with a ```mermaid or ```html box renders again when one is
@@ -188,19 +191,31 @@ final class RenderCache: @unchecked Sendable {
         return RichBlocks.shared.generation
     }
 
+    /// A reply that links a reply button renders again when a button
+    /// changes (made, pressed, failed, a press on its way).
+    static func buttonStamp(_ row: TranscriptRow) -> Int {
+        guard case .assistant(let item) = row.content, ReplyButtons.mayHold(item.text) else { return -1 }
+        return ReplyButtons.shared.generation
+    }
+
+    static func holdsButtons(_ row: TranscriptRow) -> Bool { buttonStamp(row) != -1 }
+
     /// Whether a row is drawn differently once its rich blocks change.
     static func holdsRich(_ row: TranscriptRow) -> Bool { richStamp(row) != -1 }
 
-    func cached(_ row: TranscriptRow, expanded: Bool, showAll: Bool = false, width: CGFloat) -> RowRender? {
-        cache.object(forKey: Self.key(row, expanded: expanded, showAll: showAll, width: width))
+    /// `localPictures`: false for another Mac's thread (MarkdownRenderer.localPictures).
+    func cached(_ row: TranscriptRow, expanded: Bool, showAll: Bool = false, width: CGFloat, localPictures: Bool = true) -> RowRender? {
+        cache.object(forKey: Self.key(row, expanded: expanded, showAll: showAll, width: width, localPictures: localPictures))
     }
 
-    func render(_ row: TranscriptRow, expanded: Bool, showAll: Bool = false, width: CGFloat) -> RowRender {
-        let key = Self.key(row, expanded: expanded, showAll: showAll, width: width)
+    func render(_ row: TranscriptRow, expanded: Bool, showAll: Bool = false, width: CGFloat, localPictures: Bool = true) -> RowRender {
+        let key = Self.key(row, expanded: expanded, showAll: showAll, width: width, localPictures: localPictures)
         if let hit = cache.object(forKey: key) { return hit }
-        let render = RowRenderer.render(row, expanded: Self.effectiveExpanded(row, expanded),
-                                        showAll: Self.effectiveShowAll(row, expanded: expanded, showAll: showAll),
-                                        tableWidth: width, measurer: .current)
+        let render = MarkdownRenderer.withLocalPictures(localPictures) {
+            RowRenderer.render(row, expanded: Self.effectiveExpanded(row, expanded),
+                               showAll: Self.effectiveShowAll(row, expanded: expanded, showAll: showAll),
+                               tableWidth: width, measurer: .current)
+        }
         store(render, key: key, row: row, open: Self.openLevel(row, expanded: expanded, showAll: showAll), width: width)
         return render
     }
@@ -219,13 +234,13 @@ final class RenderCache: @unchecked Sendable {
 
     /// Renders rows across all cores. Used before showing a thread or
     /// paging in older rows, so the main thread only reads the cache.
-    func prepare(_ rows: [TranscriptRow], expanded: Set<String>, width: CGFloat) {
+    func prepare(_ rows: [TranscriptRow], expanded: Set<String>, width: CGFloat, localPictures: Bool = true) {
         func showAll(_ row: TranscriptRow) -> Bool { row.kind == .diff && expanded.contains(DiffPreview.allKey(row.id)) }
-        let missing = rows.filter { cached($0, expanded: expanded.contains($0.id), showAll: showAll($0), width: width) == nil }
+        let missing = rows.filter { cached($0, expanded: expanded.contains($0.id), showAll: showAll($0), width: width, localPictures: localPictures) == nil }
         guard !missing.isEmpty else { return }
         DispatchQueue.concurrentPerform(iterations: missing.count) { index in
             let row = missing[index]
-            _ = render(row, expanded: expanded.contains(row.id), showAll: showAll(row), width: width)
+            _ = render(row, expanded: expanded.contains(row.id), showAll: showAll(row), width: width, localPictures: localPictures)
         }
     }
 
@@ -478,8 +493,11 @@ enum RowRenderer {
                 return RowRender(height: RowMetrics.workHeight, text: header, textSize: header.size())
             }
             let text = NSAttributedString(string: note, attributes: Theme.text(Theme.smallFont, color: Theme.quietText, line: TypeScale.scaled(17), alignment: .center))
-            let size = measurer.measure(text, width: width)
-            return RowRender(height: vertical + size.height, text: text, textSize: size)
+            // A wake note's bear sits left of the words, and they stay
+            // centred, so they leave its room on both sides.
+            let woke = row.content.isWakeNote
+            let size = measurer.measure(text, width: woke ? width - 2 * RowMetrics.wokenBearRoom : width)
+            return RowRender(height: vertical + (woke ? max(size.height, RowMetrics.wokenBearSide) : size.height), text: text, textSize: size)
 
         case .error(let message, let kind):
             let text = NSMutableAttributedString(string: message, attributes: Theme.text(color: .systemRed))
@@ -1039,26 +1057,43 @@ enum RowRenderer {
 
     /// The command, the start of what would be written to a file, the page,
     /// or the tool's input, in a monospaced block. The file's name and
-    /// folder are in the title above it.
+    /// folder are in the title above it. A command and a tool's input are
+    /// shown whole, every line and field, as Allow allows all of them: the
+    /// card grows to fit (Daybreak, 7 Nov 2026, a long command's tail was
+    /// cut off after 12 lines). The runner refuses a call too long to show.
     static func approvalPayload(_ request: ApprovalRequest) -> NSAttributedString {
         let input = request.input
         if let command = input["command"]?.stringValue {
-            return mono(clampLines(command, 12), .labelColor)
+            // Where it runs and any network it asks for (a Codex card's)
+            // are part of what Allow allows; a reason or description isn't.
+            let output = NSMutableAttributedString(attributedString: mono(command, .labelColor))
+            let extra = ToolPresentation.fields(input, whole: true).filter { !["command", "description", "reason"].contains($0.key) }
+            if !extra.isEmpty {
+                output.append(mono("\n", .labelColor))
+                output.append(fieldsText(extra))
+            }
+            return output
         }
-        if ApprovalText.filePath(request) != nil {
+        // Another MCP server's tool with a path is shown by all its fields,
+        // below: its content is what Allow allows.
+        if !request.name.hasPrefix("mcp__"), ApprovalText.filePath(request) != nil {
             let call = ToolCall(itemId: request.approvalId, name: request.name, kind: request.name == "Write" ? .write : .edit,
                                 title: request.title, input: input)
             if let diff = DiffBuilder.diff(forTool: call), !diff.hunks.isEmpty {
-                return diffText([diff], maxLines: 8, inset: 0).0
+                // A file Threadbear runs as code, or can't rule out, shows
+                // every line it writes: a hook past the eighth line is still a hook.
+                let code = request.title.contains("Threadbear runs this file as code")
+                    || request.title.contains("Threadbear can't tell whether this file runs as code")
+                return diffText([diff], maxLines: code ? 1_000_000 : 8, inset: 0).0
             }
             return mono(ToolPresentation.shortTitle(ApprovalText.filePath(request) ?? "", limit: 300), Theme.quietText)
         }
-        if let url = input["url"]?.stringValue {
+        if !request.name.hasPrefix("mcp__"), let url = input["url"]?.stringValue {
             return mono(url, .labelColor)
         }
-        let fields = ToolPresentation.fields(input)
-        if fields.isEmpty { return mono(clampLines(request.title, 10), .labelColor) }
-        return fieldsText(Array(fields.prefix(8)))
+        let fields = ToolPresentation.fields(input, whole: true)
+        if fields.isEmpty { return mono(request.title, .labelColor) }
+        return fieldsText(fields)
     }
 
     /// Another runner asking for a thread (docs/protocol.md, "Asking
@@ -1092,7 +1127,11 @@ enum RowRenderer {
         switch r.permissionMode {
         case "ask": access = "Asks before edits"
         case "auto": access = "Auto"
-        default: access = "Full access"
+        case "plan": access = "Plan first"
+        case nil, "", "full": access = "Full access"
+        // The runner refuses a mode it doesn't know rather than starting
+        // on full access, so the card says what was asked, not "Full".
+        case let other?: access = "Unknown (\(other))"
         }
         var facts = ["Folder: \(r.cwd?.isEmpty == false ? r.cwd! : "the usual one")", "Access: \(access)"]
         if let model = r.model, !model.isEmpty { facts.append("Model: \(model)\(r.effort.map { ", \($0)" } ?? "")") }
@@ -1607,6 +1646,15 @@ enum RowRenderer {
         ]))
         output.append(arrow("›", page + 1))
         return output
+    }
+
+    /// Where a paged card's page number is in its text: the 2 of "2 of 3",
+    /// which `asksHeading` sets off with non-breaking spaces, so an ask's
+    /// own "2 of 3" further on isn't taken for it.
+    static func pageNumberRange(in text: String) -> NSRange? {
+        guard let match = text.range(of: "\u{00A0}\u{00A0}[0-9]+ of [0-9]+\u{00A0}\u{00A0}", options: .regularExpression) else { return nil }
+        let found = text[match].drop { !$0.isNumber }.prefix { $0.isNumber }
+        return NSRange(found.startIndex..<found.endIndex, in: text)
     }
 
     /// The done card: the agent said nothing waits on Mike, so it says

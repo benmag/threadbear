@@ -46,6 +46,34 @@ final class NeedsYouTests: XCTestCase {
         XCTAssertEqual(TranscriptModel(events: model.events).row(id: "ak:3"), nil, "nor after a reload")
     }
 
+    /// A background job the agent left (a script waiting for his phone to
+    /// unlock) wakes it with a runner message, which leaves the card open,
+    /// and the summary keeps its asks while that turn runs. Every click on
+    /// the card did nothing then, as a running thread counted as having
+    /// nothing to answer (Mike, 7 Nov). Running, it takes the transcript's
+    /// word: once his own reply (the phone's too) closed the card, a pick
+    /// left unsent on this Mac mustn't go with his next message.
+    func testACardLeftOpenByABackgroundWakeCanBeAnsweredWhileItRuns() {
+        let asks: [[String: Any]] = [["action": "Unlock your iPhone", "options": ["Unlocked", "Later"]]]
+        var model = TranscriptModel(events: [done(3, turn: "t1", needs: "you", asks: asks)])
+        let ask = Ask(action: "Unlock your iPhone", options: ["Unlocked", "Later"])
+        let idle = ThreadSummary(id: "t1", title: "Walkies pushes", status: .idle, needs: "you", asks: [ask], asksSeq: 3)
+        var running = idle
+        running.status = .running
+        XCTAssertTrue(Decisions.isOpen(idle), "idle needs no transcript")
+        XCTAssertFalse(Decisions.isOpen(running), "running with no transcript to say the card's open")
+
+        _ = model.apply([E.event(4, "user.message", ["text": "The phone unlocked", "images": [], "origin": "runner"], turn: "t2"), E.event(5, "turn.started", ["turnId": "t2"], turn: "t2")])
+        XCTAssertTrue(Decisions.isOpen(running, card: model.openCard), "the woken turn left the card open")
+        var older = running
+        older.asksSeq = 2
+        XCTAssertFalse(Decisions.isOpen(older, card: model.openCard), "another card's seq")
+
+        _ = model.apply([E.event(6, "user.message", ["text": "No, cancel that", "images": []], turn: "t2")])
+        XCTAssertFalse(Decisions.isOpen(running, card: model.openCard), "his reply closed it, though the summary still has the asks")
+        XCTAssertFalse(Decisions.isOpen(ThreadSummary(id: "t1", title: "Done", status: .idle, needs: "nothing", asks: [ask], asksSeq: 3)))
+    }
+
     /// Picks the app had before the transcript loaded are on the card it builds.
     func testPicksSetBeforeTheEventsLoad() {
         var model = TranscriptModel()

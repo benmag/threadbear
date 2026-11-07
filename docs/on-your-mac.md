@@ -22,6 +22,19 @@ File references are where to look.
   If that login goes missing or expires, the Convex panel's Sign in to
   Convex button runs `convex login` again from the runner, which writes
   the same file; you approve it in your browser on auth.convex.dev.
+- **Or a self-hosted backend** (`setup --self-hosted`, docs/self-hosting.md;
+  Convex cloud is the one we recommend): no Convex login or deploy key.
+  Instead two Docker containers, `threadbear-convex` (Convex's open source
+  backend) and `threadbear-convex-dashboard`, from pinned
+  `ghcr.io/convex/*` images, with the data in the Docker volume
+  `threadbear-convex-data`. They listen on this Mac's loopback only
+  (ports 13210, 13211 and 16791), and `tailscale serve` puts them on your
+  tailnet as `https://<this Mac>.<tailnet>.ts.net` ports 3210 (the API),
+  3211 (the website) and 6791 (the dashboard), so nothing is reachable off
+  your tailnet. The backend's admin key is in
+  `secrets/convex-self-hosted.env`, and setup sets `PUSH_RELAY=off` on it,
+  as the push relay only works with Convex cloud. runner.json gets
+  `sync.site`, the website's address.
 - **Apps:** `~/Applications/Threadbear.app` and
   `~/Applications/Threadbear Runner.app`, both built and signed on your Mac.
 - **A LaunchAgent:** `~/Library/LaunchAgents/com.mikerosoft.threadbear.runner.plist`,
@@ -38,7 +51,9 @@ File references are where to look.
   `shared-pools.json`, the last pools your Convex backend had, which every
   runner shares, so one starts with them while the backend can't be reached,
   and `shortcuts.json`, the keyboard shortcuts you've changed in Settings >
-  Keyboard, which the app reads and writes and never sends anywhere). In `secrets/`, `asked/` holds the answers you
+  Keyboard, which the app reads and writes and never sends anywhere, and
+  with the standing instructions experiment on, `instructions.md`, which every
+  agent is given, and `instructions.sig`, which says Settings saved it). In `secrets/`, `asked/` holds the answers you
   type into an agent's secret card, one owner-only file each with a small
   script beside it that prints it for `sudo -A`, removed after 24 hours,
   and `secret-box.key` is the key your phone seals those answers to;
@@ -67,8 +82,9 @@ File references are where to look.
   `~/Library/Logs/threadbear-runner.log` and `threadbear-update.log`;
   `~/Library/Logs/Threadbear/hangs` (the last 10 times the app froze: if its
   main thread is stuck for 4 seconds it runs macOS's `sample` on itself, in
-  a sandbox, and
-  nothing else ever reads these); and `~/ThreadbearThreads`, the default
+  a sandbox, and notes the main thread's priority, the Mac's load average
+  and how long since the last keyboard or mouse input (just how long, never
+  what); nothing else ever reads these); and `~/ThreadbearThreads`, the default
   folder for new threads. A folder you open from a link in the side pane
   is listed, and watched for changes only while it's showing, and macOS may
   ask for permission the first time that's somewhere like Documents. The runner also runs `vm_stat` and `sw_vers` on a Mac, or reads `/proc/meminfo` and `/etc/os-release` on Linux, for the memory and system figures in the website's Runners view and the Mac app's runner details (`runner/src/runner-stats.ts`), every 5 minutes and while either is open. It also runs `ps`, and `sample` (in a
@@ -79,6 +95,21 @@ File references are where to look.
   the connection it's about to send the token over is really that runner's.
   `mac-screen.json` in the data folder
   remembers what it's said about dialogs on the screen (below).
+
+Voice mode is an experiment, off by default: while it's off (`voiceMode`
+in `runner.json`'s `experiments`) there's no button, nothing below happens
+and macOS never asks for the microphone. On, the first time you use it
+(Settings > Voice, or the waveform button beside Send), it downloads Kyutai's pocket-tts (v4.0.1, its
+Apple silicon build, checked against its SHA-256 before it's used) from
+its GitHub release into `~/Library/Application Support/Threadbear/voice/`,
+with its log `serve.log` and a `serve.<app's pid>.pid` (which process to
+stop if the app crashed) beside it. pocket-tts then downloads its English
+model and voices from Hugging Face into `~/.cache/huggingface` (about
+240 MB; another language is another model). macOS asks once for the
+microphone, and may download its own speech recognition files for the
+language (`app/Sources/Threadbear/Voice/`). `~/Library/Logs/Threadbear/voice.log`
+notes what Voice did (which microphone, whether echo cancellation
+started, errors), never what was said, and is started afresh past 256 KB.
 
 ## What runs in the background
 
@@ -116,7 +147,7 @@ File references are where to look.
   `scheduleChecks`, off by default): a schedule's check command runs in
   `/bin/sh` before each run, as you, for at most a minute (or up to five,
   if the schedule says). Each keeps a
-  state file in `schedule-checks/` in Threadbear's data folder, and
+  state file (and a note that a held check was told about, `<id>.held`) in `schedule-checks/` in Threadbear's data folder, and
   beside it what the check last printed (`<id>.<hash>.kept.json`, readable
   only by you) until a run carrying it has been sent, and, while a check
   runs, which runner process is running it (`<id>.running.json`).
@@ -126,11 +157,12 @@ File references are where to look.
   <runner pid>`, which stops idle sleep only (the display still sleeps
   and the screen still locks). While it does, it reads `pmset -g batt`
   every 2 minutes and lets go on battery below 15%.
-- **Mike's releases** (`runner/src/upstream.ts`): every 6 hours it fetches
-  `upstream`'s signed `release/*` tags into `refs/threadbear/upstream-incoming/`
-  in your checkout, checks each with `ssh-keygen -Y verify` against the
-  pinned key (the signature goes in a temp file under `$TMPDIR` for a
-  moment), and copies those that pass to `refs/threadbear/upstream/`. It never changes your code by
+- **Mike's releases** (`runner/src/upstream.ts`): every 6 hours it lists
+  `upstream`'s `release/*` tags, fetches the newest few into a folder of
+  their own (`<home>/runner/upstream-fetch`, deleted after each check),
+  checks each with `ssh-keygen -Y verify` against the pinned key (the
+  signature goes in a temp file under `$TMPDIR` for a moment), and copies
+  the newest that passes into your checkout, as `refs/threadbear/upstream/`. It never changes your code by
   itself. Every 5 days, when there's one your copy doesn't have, it starts
   one thread (on your own Claude or Codex login, like any thread) that
   merges it in a worktree, runs the checks and asks you before it lands
@@ -177,6 +209,16 @@ File references are where to look.
   those files and the scripts they reach to hash them, runs `git ls-files`
   in the folder to find skills in folders under it, and keeps what you
   trusted in the same `patch-trust.json`.
+- **Voice** (`app/Sources/Threadbear/Voice/VoiceServer.swift`): only
+  while Voice is in use and for 5 minutes after, the app runs
+  `pocket-tts serve` on a free port on 127.0.0.1 (not reachable from other
+  machines), sends it each reply's sentences and plays what comes back.
+  It stops when the app quits. If the app crashed instead, the next launch
+  reads that pid file and stops it, once it's checked that process really is
+  this pocket-tts. While Voice is on, the microphone is on,
+  and what you say is turned into text on this Mac by macOS's own speech
+  recognition (SpeechAnalyzer); the audio isn't saved or sent anywhere.
+  The text goes to the thread as your message.
 - **Menus on macOS 27.2** (`app/Sources/Threadbear/DragSpace.swift`): every
   5 seconds, and before a button opens a menu, the app asks the window
   server which Spaces its own windows are on, and takes them off the drag
@@ -224,6 +266,7 @@ File references are where to look.
 | Anthropic, OpenAI, Cursor | yours | Your threads, through the official CLIs on your own logins. Cursor's CLI (`agent acp`) talks to `api2.cursor.sh` (its default `--endpoint`). With the `labReview` experiment on (off by default), a thread's code change, with your message and the agent's reply, goes to your other provider's CLI as a review thread, as if you'd started one. After a turn fails because the API couldn't be reached, the runner itself opens (and straight away closes) a connection to api.anthropic.com, chatgpt.com or api2.cursor.sh on port 443, at most once a minute, until one opens and the thread carries on. Nothing is sent over it (`runner/src/net-probe.ts`). |
 | Mike's push relay | Mike's | Only when a paired iPhone gets a notification. It's sent from your Convex deployment, not the Mac. The text is encrypted for the phone; the relay sees the device token and thread id (`convex/push.ts`, `docs/push-relay.md`). The first time, your deployment registers with it, giving its own address; the relay keeps that address and checks it by posting a one-time code back to your deployment's `/relay/verify` (`convex/http.ts`). |
 | A Connectors gateway | whoever runs it | Only if one is set in `runner.json` or `~/.claude.json`. Its `/health` every few minutes (and once more at the end of a turn where a call to one of its services failed, to see if it needs signing in), and for a project with a Notion page, a Notion read or two every 5 minutes for its task board (`runner/src/notion-tasks.ts`), signed with the header the `headersHelper` command in that `connectors` entry prints, which it runs for each read |
+| GitHub, Hugging Face | Kyutai's | Only with the `voiceMode` experiment on, the first time Voice is used: the pocket-tts download, then its model and voices. Nothing of yours is sent. |
 | Sentry | Mike's | Nothing from your copy. Only a copy whose `origin` is Mike's own repo reports errors or uploads the app's debug symbols (`runner/src/sentry.ts`, `app/Sources/Threadbear/CrashReporting.swift`, `app/build-app.sh`). The App Store iPhone app sends anonymous crash reports. |
 
 An HTML file opened in the side pane (a mockup or report an agent made,

@@ -30,8 +30,12 @@ export const handoversPart = {
     const d: Drain = {
       // A thread whose worktree cleanup is running stays until it's done
       // (letGo), as a busy one would, so the rest go now rather than wait.
-      keep: new Set([...keep, ...[...this.threads.values()].filter((st) => st.rt.cleaning).map((st) => st.rec.id)].filter((id) => this.threads.has(id))),
+      // So does one with a turn-end hook running: the restarter doesn't
+      // count that as busy, but its result may start a turn, and an archive
+      // waiting for it (archiveWhenGone) isn't saved anywhere to pick up.
+      keep: new Set([...keep, ...[...this.threads.values()].filter((st) => st.rt.cleaning || st.rt.hooksRunning).map((st) => st.rec.id)].filter((id) => this.threads.has(id))),
       going: new Set(),
+      gone: new Set(),
       onHandedOver: opts.onHandedOver,
       since: this.clock.now(),
       backgroundMs: opts.backgroundMs ?? DRAIN_BACKGROUND_MS,
@@ -156,6 +160,7 @@ export const handoversPart = {
     rt.deleted = true;
     this.dirty.delete(rec.id);
     this.threads.delete(rec.id);
+    this.draining?.gone.add(rec.id);
     this.store.forget(rec.id);
   },
 
@@ -180,7 +185,7 @@ export const handoversPart = {
     if (rec.asked === undefined && !rec.archivedAt) this.backfillAsked(rec);
     this.recoverReviews(st);
     // Handed over before its worktree cleanup finished (letGo's limit).
-    void this.settleLostCleanups([st]);
+    void this.settleLostCleanups([st], false);
     if (opts.crashed) {
       // main.ts carries it on (carryOnStopped), after any resume of its own.
       if (this.recover(st)) this.notice('info', `The old runner stopped while "${rec.title}" was mid-turn.`);

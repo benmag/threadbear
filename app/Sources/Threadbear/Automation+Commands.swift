@@ -142,9 +142,9 @@ extension Automation {
 
     /// A key event the text box with the cursor gets, as a real key press
     /// would reach it, without the app coming to the front.
-    static func pressAtCursor(_ window: NSWindow?, characters: String, keyCode: UInt16) -> String {
+    static func pressAtCursor(_ window: NSWindow?, characters: String, keyCode: UInt16, modifiers: NSEvent.ModifierFlags = []) -> String {
         guard let field = window?.firstResponder as? NSTextView else { return "error the cursor isn't in a text box" }
-        guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+        guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
                                            windowNumber: window?.windowNumber ?? 0, context: nil, characters: characters,
                                            charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode)
         else { return "error no event" }
@@ -356,32 +356,30 @@ extension Automation {
     }
 
     /// Two fingers across the middle of the window (`{"dx": 150, "dy": 0}`,
-    /// right and down positive; right is Back), as synthetic trackpad
-    /// events through SwipeNavigation's handler. A made-up event has no
-    /// window of its own, so, as for `mouse-button`, it's handed the main
-    /// one; once AppKit's swipe tracking has the gesture, the rest go to
-    /// the queue, where it reads them. Says what the start was decided as,
-    /// how far the swipe got, and where the window is after.
+    /// right and down positive; right is Back), through the handler
+    /// SwipeNavigation's monitor calls. A made-up event has no window of its
+    /// own, so, as for `mouse-button`, it's handed the main one. `"lift":
+    /// false` leaves the fingers down, for a shot of the arrow; a later
+    /// page-swipe carries on. Says how far it got and where the window is after.
     static func pageSwipe(_ c: [String: Any], app: AppModel) async -> String {
         guard let window = MainWindowFrame.window else { return "error no window" }
         let dx = number(c["dx"]) ?? 0, dy = number(c["dy"]) ?? 0
         let steps = max(1, Int(number(c["steps"]) ?? 8))
-        var held = 0, tracked = false, furthest = 0.0
         func page(_ x: Double, _ y: Double, _ phase: RowSwipeEvents.Phase) {
-            guard let event = RowSwipeEvents.event(dx: x, dy: y, phase: phase, middle: true, down: number(c["down"])) else { return }
-            if SwipeNavigation.shared.amount != nil { tracked = true; return post(event) }
-            if SwipeNavigation.shared.handle(event, in: window) { held += 1 }
+            guard let event = RowSwipeEvents.event(dx: x, dy: y, phase: phase, middle: true) else { return }
+            _ = SwipeNavigation.shared.handle(event, in: window)
         }
-        page(0, 0, .began)
+        if SwipeNavigation.shared.swipe.phase == .idle { page(0, 0, .began) }
         for _ in 0..<steps {
             page(dx / Double(steps), dy / Double(steps), .changed)
             try? await Task.sleep(for: .milliseconds(16))
-            furthest = max(furthest, abs(SwipeNavigation.shared.amount ?? 0))
         }
+        let swipe = SwipeNavigation.shared.swipe
+        let along = "\(swipe.direction.map { "\($0)" } ?? "no swipe") progress \(String(format: "%.2f", swipe.progress)) armed \(swipe.armed)"
+        guard c["lift"] as? Bool ?? true else { return "ok \(along)" }
         page(0, 0, .ended)
-        try? await Task.sleep(for: .milliseconds(700))
-        let how = tracked || furthest > 0 ? "page swipe \(String(format: "%.2f", furthest)) of a page" : "scroll"
-        return "ok \(how) (\(held) held), let go: \(app.selection ?? "new") back=\(app.canGoBack) forward=\(app.canGoForward)"
+        try? await Task.sleep(for: .milliseconds(300))
+        return "ok \(along), let go: \(app.selection ?? "new") back=\(app.canGoBack) forward=\(app.canGoForward)"
     }
 
     static func post(_ event: NSEvent?) {

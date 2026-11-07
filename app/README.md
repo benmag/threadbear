@@ -471,8 +471,11 @@ app has quit (another thread's once it has been quiet for 30 minutes).
 Tools/dev-app.sh start --mock                    # the demo threads; prints the instance id
 Tools/dev-app.sh start --mock --fixtures .fixtures/threads/<id>   # a tb export
 Tools/dev-app.sh start --home <dev runner home>  # runner/scripts/dev-runner.sh
+Tools/dev-app.sh start --mock --bear-date 2026-12-24T23:00   # the date the bear goes by: its Santa hat (1 to 26 December), bedtime under an empty Inbox
+TB_MOCK_NO_REMOTE=1 Tools/dev-app.sh start --mock --fixtures Tools/mock-runner/fixtures/demo-keep-awake   # archive that one and the inbox is empty: bruce's demo threads can't be
 Tools/dev-app.sh do '{"cmd":"open","id":"demo_upload"}' '{"cmd":"expand","row":"g:"}'
 Tools/dev-app.sh do '{"cmd":"collapse","highlightSection":"subagents"}'   # a Highlights heading; see HighlightFold
+Tools/dev-app.sh do '{"cmd":"point","settings":true,"x":200,"y":262,"toX":215,"toY":345,"holdMs":800}'   # real events in the Settings window; holdMs waits mid-drag for a `shot`
 Tools/dev-app.sh do '{"cmd":"click","tip":"Hide Links"}'   # presses a SwiftUI control by its tooltip, without moving the pointer
 Tools/dev-app.sh do '{"cmd":"error","text":"Thread not found"}'   # fills the error bar ({"cmd":"error"} clears it)
 Tools/dev-app.sh dump            # sidebar, rows (id, kind, height, open, text), panels, actions, composer, banner
@@ -528,8 +531,9 @@ is an error. Commands marked "the open thread" act on `id` when it's given
 | `select` | `id` | selects it without waiting |
 | `subagent` | `thread` (default: the open one), `id`, `timeout` | shows a sub-agent's transcript, as clicking its row under the thread does, and waits until its rows are on screen |
 | `menu-key` | `key` (a letter, or `down`, `up`, `left`, `right`), `modifiers` (`cmd`, `opt`, `ctrl`, `shift`) | a key equivalent through the main menu, as pressing it would; says whether an item took it, the open thread and any end-of-inbox note |
+| `click-at` | `x`, `y` | a click at a point in the main window, in points from its top left, without moving the pointer |
 | `mouse-button` | `button` (`back`, `forward`) | a mouse's side-button click over the window, through the same handler as a real one; says the sidebar view, the thread and whether back and forward can go further |
-| `page-swipe` | `dx`, `dy` (right and down positive; right is Back), `steps`, `down` (points from the window's top) | two fingers across the window, as synthetic trackpad events through SwipeNavigation's handler. Says whether the start was taken as a scroll or a page swipe and how far that got, how many events were held back while deciding, then where the window went |
+| `page-swipe` | `dx`, `dy` (right and down positive; right is Back), `steps`, `lift` (default true) | two fingers across the middle of the window, as synthetic trackpad events through the handler SwipeNavigation's monitor calls; `"lift": false` leaves the fingers down for a shot of the edge arrow. Says the way, how far along and whether it's past the line, then where the window went |
 | `realMenu` | `x`, `y` (window points from the top left; `right` to right-click) or `main` (a menu bar menu), `sub` | opens a real menu; `dev-app.sh menu <file.png> '<these as JSON>'` captures it, the only way to see its icons. It's up for a second over whatever's in front, so check `HIDIdleTime` first |
 | `new`, `options` | `cwd`, `account`, `model` (`null` for the default), `effort` (`null` for the model's own), `ask` | the new-thread composer and its menus; `options` refuses anything else (a typo used to pass) and says what's set now |
 | `composer-menu` | `menu` (`model`, `account`, `permission`, `folder`, `runner`, the new-thread composer's Runs on, or `context`, the context ring: its tokens and percent, `show` opens its popover; default `model`), `click` (an item's title; an account's email or id), `show` (opens the model or account picker and says its window number) | the composer chip's menu (or the model or account picker) for the open thread or a new one, as text: `[x]` the ticked item, `*` the default, the subtitle after a dash, submenus and older models indented, `#` on a section, `---` before the account picker's line about where the numbers came from; `click` picks an item as a click would |
@@ -578,9 +582,9 @@ is an error. Commands marked "the open thread" act on `id` when it's given
 | `page-scroll` | `dy` (points a frame, 14), `steps` (120), `back` (default true), `updates` (a second, 0) | scrolls the scroll view under the middle of the window (the transcript, or a page like Projects) down and back, as a trackpad would, optionally with that many stand-in thread updates a second, and says how the frames went. Needs `front` |
 | `action` | `id`, `timeout` | runs that action chip of the selected thread and waits for a command to finish (default 60 s); `dump` lists the actions |
 | `trust` | `id` | does what Patches' Trust button does, for the selected thread's waiting patches (`id` for one) |
-| `panel` | `id`, `show` | the selected thread's pane sections, each a panel in the window's dock: `id` opens or brings up that section (`threadbear.highlights`, a panel's id, or `threadbear.patches`; an error names the ones it has), `show` false closes every section and true opens them again (Highlights if none), neither toggles; `dump` lists the sections, the active one starred, and what Highlights has, and its `dock:` line is the whole layout |
+| `panel` | `id`, `show` | the selected thread's pane sections, each a panel in the window's dock: `id` opens or brings up that section (`threadbear.highlights`, `threadbear.files`, a panel's id, or `threadbear.patches`; an error names the ones it has), `show` false closes every section and true opens them again (Highlights if none), neither toggles; `dump` lists the sections, the active one starred, and what Highlights has, and its `dock:` line is the whole layout |
 | `folder` | `open`, `select`, `click` (`count`), `expand`, `up`, `mode`, `sort` (`ascending`), `hidden`, `key` (`command`, `shift`, `characters`), `crumb`, `pathBar`, `menu`, `choose` (`row`), `quickLook` | the folder browser showing in the pane (FolderBrowser.swift): `open` is what a double-click does to that row, `select` picks it, `click` presses it through the window (`count` 2 for a double-click), `expand` is its triangle, `up` is ⌘↑, `mode` is `list` or `icons`, `sort` a column (`name`, `modified`, `size`), `hidden` is ⌘⇧., `key` a key code on the view showing, `crumb` a folder in the path bar; says the rows, and `pathBar` its words, `menu` a row's right-click menu (`""` the empty space's), `choose` picks an item of it (`row`, or the empty space's), `quickLook` what the space bar would show. `dump`'s preview line has the same summary |
-| `preview` | `path`, `url`, `close`, `back`, `edit`, `insert` | opens a file, folder or page in the selected thread's pane, as a click on a highlight does (a web URL goes to the browser); `close` goes back to the section, `back` is the bar's Back. Over a text file, `edit` true or false is the bar's pencil or Done, and `insert` types text at the end of the editor (`wait` false returns before the save), `resolve` (`file` or `mine`) presses the conflict bar's button; `dump`'s preview line says `(editing)` |
+| `preview` | `path`, `url`, `close`, `back`, `edit`, `insert`, `save` | opens a file, folder or page in the selected thread's pane, as a click on a highlight does (a web URL goes to the browser); `close` goes back to the section, `back` is the bar's Back. Over a text file, `edit` true or false is the bar's pencil or Done, and `insert` types text at the end of the editor (`wait` false returns before the save), `save` true is ⌘S, `resolve` (`file` or `mine`) presses the conflict bar's button; `dump`'s preview line says `(editing)` |
 | `waitFor` | `row`, `kind`, `status` (and `thread`), `text`, `banner` (`""` for none), `connection`, `loaded`, `ready`, `not`, `timeout` | until every condition given holds (default 10 s) |
 | `dump` | `format` (`json`, `text`), `out` | |
 | `screenshot` | `path`, `inProcess` | `screencapture -l`, or drawn in-process when that gives no image; a dev-app instance always draws in-process (`shot` runs screencapture itself). `out` and `path` are refused under ~/Desktop, ~/Documents and ~/Downloads, where macOS would ask Mike to let the temp bundle in; `shot` and `dump` write in the instance's folder and move the file |
@@ -625,7 +629,9 @@ the runner, and which events each row came from ("Copy debug info").
 `MockRunnerTests` runs the real WebSocket client against the mock runner,
 its restart included (skipped if node or the mock's `npm install` is
 missing, except under `THREADBEAR_REQUIRE_MOCK=1`, which `../check.sh` sets
-after installing the mock's packages). `ThreadbearAppTests` tests the app target itself: typing into the
+after installing the mock's packages). A test that reaches a real modal (an
+alert, a save panel) ends the run at once with its stack (`Tests/ModalGuard`),
+as nobody can click it on a check host: stub what asks. `ThreadbearAppTests` tests the app target itself: typing into the
 composer, question answers, incremental streaming heights against a full
 measure, the render cache, sliced tall text, drafts kept when a send fails,
 the restart banner, the runner's message as a note, and the automation
@@ -647,3 +653,15 @@ streams) and text typed into the composer reaching the draft.
 - The model picker lists the CLI's own rows once the runner has asked each
   account (a few seconds after it starts); until then it offers opus, sonnet
   and haiku by name. The runner passes the row's id through to the CLI.
+
+### A real drag
+
+`point` hands events to a window kept behind everything, so it reaches AppKit
+controls, but a SwiftUI gesture ignores a window that isn't key (a `DragGesture`
+never fires, 7 Nov). For those, on Tinker Desk's desktop and never Mike's:
+`{"cmd":"settings","tab":"runners","front":true}` floats the Settings window
+on top and says its number and top left, and `Tools/realdrag.swift` (compile it
+with `swiftc`, run it through `desk`) posts a real drag. Click a blank part of
+the window with it first to make the window key. Look at the whole desktop
+once if nothing happens: other threads' windows and permission dialogs sit
+there, and a drag that misses lands in them.

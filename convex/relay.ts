@@ -11,7 +11,7 @@
 // a command's state is one get by id.
 import { ConvexError, v } from 'convex/values';
 import { mutation, query } from './_generated/server';
-import { checkRunnerId, forbidden, runnerAuth } from './lib';
+import { checkRunnerId, forbidden, pageLimit, runnerAuth } from './lib';
 import { docBytes } from './runnerAccess';
 
 // The live tail: enough for a message or two of tool rows between texts.
@@ -54,7 +54,7 @@ export const remoteTail = query({
   returns: v.object({ messages: v.array(relayRow), hasMore: v.boolean() }),
   handler: async (ctx, { key, threadId, limit }) => {
     await runnerAuth(ctx, key, 'remoteTail');
-    const want = Math.max(1, Math.min(TAIL_MAX, Math.floor(limit ?? TAIL_MAX)));
+    const want = pageLimit(limit, TAIL_MAX, TAIL_MAX);
     const rows = await ctx.db.query('messages').withIndex('by_thread_seq', (q) => q.eq('threadId', threadId)).order('desc').take(want + 1);
     return { messages: rows.slice(0, want).reverse().map(toRow), hasMore: rows.length > want };
   },
@@ -69,7 +69,7 @@ export const remoteMessages = query({
   returns: v.object({ messages: v.array(relayRow), hasMore: v.boolean() }),
   handler: async (ctx, { key, threadId, beforeSeq, afterSeq, limit }) => {
     await runnerAuth(ctx, key, 'remoteMessages');
-    const want = Math.max(1, Math.min(PAGE_MAX, Math.floor(limit ?? PAGE_DEFAULT)));
+    const want = pageLimit(limit, PAGE_DEFAULT, PAGE_MAX);
     if (afterSeq !== undefined) {
       const rows = await ctx.db.query('messages').withIndex('by_thread_seq', (q) => q.eq('threadId', threadId).gt('seq', afterSeq)).order('asc').take(want + 1);
       return { messages: rows.slice(0, want).map(toRow), hasMore: rows.length > want };
@@ -100,6 +100,8 @@ export const remoteThread = query({
 // What a command from the main Mac may carry, kind by kind: only what that
 // runner's apply() reads, so nothing else is stored. Each gets `from: "mac"`,
 // so a message it sends isn't marked as the phone's (phone.ts never sets it).
+// The modes a new thread can start on (runner/src/protocol.ts, PERMISSION_MODES).
+const PERMISSION_MODES = ['full', 'ask', 'auto', 'plan'] as const;
 const KINDS = ['send', 'respond', 'update', 'create', 'interrupt', 'call', 'share'] as const;
 type Kind = (typeof KINDS)[number];
 // Methods a `call` may run on the other runner, and nothing else: answers
@@ -142,8 +144,19 @@ export function commandArgs(kind: Kind, raw: unknown): Record<string, unknown> {
     case 'create':
       if (str(a.text) === undefined || !str(a.text)!.trim()) throw bad('a new thread needs text');
       out = pick(a, ['text', 'cwd', 'accountId', 'model', 'effort']);
-      // "Ask before edits" from the composer: left out, the thread gets full access.
-      if (a.permissionMode === 'ask' || a.permissionMode === 'full' || a.permissionMode === 'auto') out.permissionMode = a.permissionMode;
+      // Left out, the thread gets full access, so every mode is kept and an
+      // unknown one refused, never dropped (Daybreak, 7 Nov 2026: Plan first
+      // arrived as Full access). Plan first comes as "ask" with plan: true
+      // (runner/src/protocol.ts, remoteCreateMode), which a runner from
+      // before it reads as Ask.
+      if (a.permissionMode !== undefined) {
+        if (!PERMISSION_MODES.includes(a.permissionMode as never)) throw bad(`permissionMode must be one of ${PERMISSION_MODES.join(', ')}`);
+        out.permissionMode = a.permissionMode;
+      }
+      if (a.plan !== undefined) {
+        if (a.plan !== true || a.permissionMode !== 'ask') throw bad('plan: true goes with permissionMode "ask"');
+        out.plan = true;
+      }
       break;
     case 'interrupt':
       out = {};

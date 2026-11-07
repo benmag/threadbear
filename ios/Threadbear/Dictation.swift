@@ -142,6 +142,18 @@ final class Dictation {
         }
     }
 
+    #if DEBUG
+    /// Whisper working after the mic's off, for screenshots (-ThreadbearTypingOut).
+    func fakeTypingOut() { isTranscribing = true }
+
+    /// Looks 8 seconds into listening, for screenshots (-ThreadbearDictating).
+    func fakeListening() {
+        isListening = true
+        startedAt = .now.addingTimeInterval(-8)
+        level.fake()
+    }
+    #endif
+
     /// The mic tapped off: Whisper now types out what it heard. Apple's has
     /// typed as it went, so it just stops.
     func finish() {
@@ -360,6 +372,14 @@ nonisolated final class MicLevel: @unchecked Sendable {
         levels.append(value)
         lock.unlock()
     }
+
+    #if DEBUG
+    func fake() {
+        lock.lock()
+        levels = (0..<Self.count).map { Float(0.25 + 0.6 * abs(sin(Double($0) * 0.7))) }
+        lock.unlock()
+    }
+    #endif
 
     func reset() {
         lock.lock()

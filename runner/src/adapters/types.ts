@@ -3,6 +3,7 @@
 // process per live thread and reports normalised output. Claude, Codex and
 // Cursor and OpenCode are the implementations of AgentAdapter.
 import type { SlashCommand } from '../slash-commands.ts';
+import type { CodeWrite } from '../code-writes.ts';
 import type {
   Account,
   BackgroundKind,
@@ -27,6 +28,9 @@ export type StartSessionOptions = {
   model?: string;
   effort?: EffortLevel; // undefined: the model's own level
   permissionMode: PermissionMode;
+  // Its CLI must run in a sandbox (sandbox.ts, ThreadRecord.confined): an
+  // adapter that can't put it in one refuses to start it.
+  confined?: boolean;
   // Native session id. With resume=false it's pre-assigned to a brand new
   // session; with resume=true the CLI loads that session's transcript.
   // Codex assigns its own ids, so it ignores this when resume=false and
@@ -62,7 +66,7 @@ export type StartSessionOptions = {
   // what they name (code-writes.ts). Outside Full access such an edit
   // always asks, with no "Always allow". The adapter checks the names in
   // code-writes.ts too, so leaving this out never asks less.
-  runsAsCode?: (file: string) => boolean;
+  runsAsCode?: (file: string) => CodeWrite;
   // Claude, in Full with the folder's settings loaded: they hold
   // permission rules that aren't trusted for a thread that asks first, so
   // the session must be able to stop them applying if the thread leaves
@@ -172,7 +176,10 @@ export type ToolApprovalRequest = {
 
 // mode: the permission mode to switch to as the call goes ahead (approving
 // a "Plan first" plan takes the thread out of plan mode).
-export type ToolApprovalAnswer = { decision: 'allow' | 'allowAlways' | 'deny' | 'expired'; message?: string; mode?: PermissionMode };
+// stopped: an expired card that Mike pressed Stop on (the Mac app or the
+// phone), as opposed to one that closed unanswered for any other reason. Only then may an agent be told
+// the user stopped it (docs/protocol.md, "Who stopped it").
+export type ToolApprovalAnswer = { decision: 'allow' | 'allowAlways' | 'deny' | 'expired'; message?: string; mode?: PermissionMode; stopped?: boolean };
 
 export type QuestionRequest = {
   toolUseId?: string;
@@ -181,7 +188,8 @@ export type QuestionRequest = {
 };
 
 // answers: question text -> chosen label(s); null when dismissed or expired.
-export type QuestionAnswer = { answers: Record<string, string> | null; message?: string };
+// stopped: as ToolApprovalAnswer's.
+export type QuestionAnswer = { answers: Record<string, string> | null; message?: string; stopped?: boolean };
 
 export interface SessionSink {
   output(o: AdapterOutput): void;

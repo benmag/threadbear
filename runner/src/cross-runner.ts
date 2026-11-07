@@ -117,6 +117,11 @@ export class CrossRunner {
       return `Started thread ${t.id} on ${target.name}. Use read_thread to see how it goes.`;
     }
     const approvalId = crypto.randomUUID();
+    // Plan first goes as Ask: a main runner from before Plan first dropped
+    // the mode it didn't know and started the thread on full access, and
+    // the request row has no room for a flag an older one would ignore
+    // (Codex review, 7 Nov 2026). Ask is as careful, and works everywhere.
+    if (request.permissionMode === 'plan') request.permissionMode = 'ask';
     await backend.fileRequest({ requestId: approvalId, threadId, target: runner, request });
     const input: Record<string, unknown> = { runner, ...request };
     const answer = await this.deps.card(threadId, {

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { sandboxSpawner, type SandboxConfig } from '../../sandbox.ts';
+import { CONFINED_NO_SANDBOX, sandboxSpawner, type SandboxConfig } from '../../sandbox.ts';
 import os from 'node:os';
 import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import type { HookInput, McpServerConfig, ModelInfo, Options, PermissionResult, Query, SDKUserMessage, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
@@ -15,12 +15,12 @@ import { ClaudeNormalizer, fileContext } from './normalize.ts';
 import { groupSpawner, type ProcessRegistry } from '../../proc.ts';
 import { prepareImageForModel } from '../../media.ts';
 import { placePictures } from '../../pictures.ts';
-import { EDIT_TOOLS, toolTitle, truncateInput } from '../../tools.ts';
-import { RUNS_AS_CODE, RUNS_AS_CODE_REASON, runsAsCodeByName } from '../../code-writes.ts';
+import { EDIT_TOOLS, cardInput, toolTitle, tooLongForCard } from '../../tools.ts';
+import { codeWriteNote, codeWriteReason, runsAsCodeByName, type CodeWrite } from '../../code-writes.ts';
 import path from 'node:path';
 import { RUNNER_VERSION } from '../../config.ts';
 import { stripModelSuffix } from '../../accounts.ts';
-import { END_TURN_FULL_NAME, END_TURN_NUDGE, endTurnMessageStands, endTurnWantsReply, ONE_REPLY_END_TURN_NUDGE, ONE_REPLY_WRITE_NUDGE, owedReplyAfterCompact } from '../../needs.ts';
+import { END_TURN_FULL_NAME, END_TURN_NUDGE, endTurnMessageStands, endTurnWantsReply, ONE_REPLY_END_TURN_NUDGE, ONE_REPLY_WRITE_NUDGE, owedReplyAfterCompact, WakeRead } from '../../needs.ts';
 
 // Variables a parent Claude Code session sets for its own children. If the
 // runner was started from inside one (tests, a terminal in T3), they would
@@ -134,6 +134,9 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   start(opts: StartSessionOptions, sink: SessionSink): AgentSession {
+    // A thread shut in a sandbox never starts outside one, even if its
+    // folder has stopped being in one since (a link put in its place).
+    if (opts.confined && !this.deps.sandboxFor?.(opts.cwd)) throw new Error(CONFINED_NO_SANDBOX(opts.cwd));
     const s = new ClaudeSession(opts, sink, this.deps);
     s.start();
     return s;
@@ -317,6 +320,12 @@ export function modelChoices(rows: ModelInfo[]): ModelChoice[] {
   return out;
 }
 
+// What an agent is told when its permission request closes without an
+// answer from anyone. In its result, so it reads it at the call it made.
+export function cardClosedMessage(why: string | undefined): string {
+  return `Threadbear closed this permission request before anyone answered it${why ? ` (${why.replace(/\.$/, '')})` : ''}. The user did not decline it, so don't tell them they did. The tool didn't run.`;
+}
+
 class ClaudeSession implements AgentSession {
   private opts: StartSessionOptions;
   private sink: SessionSink;
@@ -356,6 +365,10 @@ class ClaudeSession implements AgentSession {
   private messageStands = false;
   private pastEndTurn = false;
   private endTurnCall?: string;
+  // Whether the agent has read a background task's notification that came
+  // into the turn: from then its end_turn is behind it, so the Stop hook
+  // asks for another (needs.ts, WakeRead).
+  private wake = new WakeRead();
   // Each end_turn call's card questions, by item id, until its result.
   private endTurnAsks = new Map<string, string[]>();
   // A reply owed after an accepted one-reply end_turn, with its card's
@@ -422,7 +435,7 @@ class ClaudeSession implements AgentSession {
         SessionStart: [{ hooks: [async (input) => this.onCompact(input)] }],
       },
       abortController: this.abort,
-      spawnClaudeCodeProcess: ((spawn, sb) => (sb ? sandboxSpawner(spawn, sb, opts.threadId) : spawn))(
+      spawnClaudeCodeProcess: ((spawn, sb) => (sb ? sandboxSpawner(spawn, sb, opts.threadId) : opts.confined ? () => { throw new Error(CONFINED_NO_SANDBOX(opts.cwd)); } : spawn))(
         groupSpawner(deps.registry, deps.log, (line) => this.stderr(line), opts.threadId),
         deps.sandboxFor?.(opts.cwd),
       ),
@@ -514,9 +527,10 @@ class ClaudeSession implements AgentSession {
     this.noteWriteMode(id, full ? 'full' : this.mode === 'full' ? 'ask' : this.mode);
     if (this.mode === 'full') return {};
     const file = this.editTarget(call.tool_input);
-    if (!file || !this.runsAsCode(file)) return {};
+    const kind = file ? this.runsAsCode(file) : false;
+    if (!kind) return {};
     this.codeWrites.add(id);
-    return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: RUNS_AS_CODE_REASON } };
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: codeWriteReason(kind) } };
   }
 
   // Keeps the strictest mode a call was seen on.
@@ -534,8 +548,8 @@ class ClaudeSession implements AgentSession {
     return typeof file === 'string' && file ? path.resolve(this.opts.cwd, file) : undefined;
   }
 
-  private runsAsCode(file: string): boolean {
-    return runsAsCodeByName(file) || this.opts.runsAsCode?.(file) === true;
+  private runsAsCode(file: string): CodeWrite {
+    return runsAsCodeByName(file) || (this.opts.runsAsCode?.(file) ?? false);
   }
 
   private stderr(line: string): void {
@@ -556,6 +570,7 @@ class ClaudeSession implements AgentSession {
         // to call it (1 Nov 2026, thread cdfccbc3).
         if ((msg as { type?: string }).type === 'result') {
           this.forgetEndTurn();
+          this.wake.reset();
           this.owedReply = undefined;
           this.endTurnAsks.clear();
         }
@@ -574,6 +589,7 @@ class ClaudeSession implements AgentSession {
           // ahead of the call comes through.
           if (out.kind === 'event') {
             const ev = out.event;
+            if (this.wake.see(ev)) this.forgetEndTurn();
             if (ev.type === 'tool.call' && ev.name === END_TURN_FULL_NAME) {
               this.endTurnCall = ev.itemId;
               const asks = Array.isArray(ev.input.asks) ? (ev.input.asks as { question?: unknown; action?: unknown }[]) : [];
@@ -646,6 +662,8 @@ class ClaudeSession implements AgentSession {
       const questions = normaliseQuestions(input.questions);
       const ans = await this.sink.requestQuestion({ toolUseId: itemId, questions, signal: o.signal });
       if (ans.answers) return { behavior: 'allow', updatedInput: { ...input, answers: ans.answers }, toolUseID: o.toolUseID };
+      // Stop stops whoever's asking, as with a tool's card below.
+      if (ans.stopped) return { behavior: 'deny', message: ans.message || 'Interrupted.', interrupt: true, toolUseID: o.toolUseID };
       return { behavior: 'deny', message: ans.message || 'The user dismissed the question without answering.', toolUseID: o.toolUseID };
     }
     if (this.deps.neverAsk?.has(name) && !this.deps.alwaysAsk?.has(name)) return { behavior: 'allow', updatedInput: input, toolUseID: o.toolUseID };
@@ -660,14 +678,20 @@ class ClaudeSession implements AgentSession {
     // An edit that writes code Threadbear runs: asked about every time, and
     // the card says why (code-writes.ts).
     const target = EDIT_TOOLS.has(name) ? this.editTarget(input) : undefined;
-    const code = this.codeWrites.has(o.toolUseID) || (target !== undefined && this.runsAsCode(target));
+    const code: CodeWrite = (target !== undefined && this.runsAsCode(target)) || this.codeWrites.has(o.toolUseID);
+    // The card shows the whole command, or every argument of an MCP tool
+    // (what it does elsewhere is in them); one too long for that is refused
+    // rather than allowed from its start (tools.ts, cardInput).
+    // An edit of a file that runs as code shows all it writes, too (Codex review).
+    const card = cardInput(input, name.startsWith('mcp__') || code ? 'all' : ['command']);
+    if (card.tooLong) return { behavior: 'deny', message: tooLongForCard(card.tooLong), toolUseID: o.toolUseID };
     if (!sub) for (const out of this.normalizer.beforeApproval(o.toolUseID, name, input)) this.sink.output(out);
     const title = toolTitle(name, input, this.opts.cwd);
     const ans = await this.sink.requestApproval({
       toolUseId: itemId,
       name,
-      title: code ? `${title} (${RUNS_AS_CODE})` : title,
-      input: truncateInput(input),
+      title: code ? `${title} (${codeWriteNote(code)})` : title,
+      input: card.input,
       // "Always allow" would defeat a tool that's meant to ask every time.
       canAlwaysAllow: !plan && !code && !o.suppressAlwaysAllowRule && !this.deps.alwaysAsk?.has(name),
       signal: o.signal,
@@ -699,7 +723,12 @@ class ClaudeSession implements AgentSession {
         };
       }
       case 'expired':
-        return { behavior: 'deny', message: ans.message || 'The request expired.', interrupt: true, toolUseID: o.toolUseID };
+        // `interrupt` makes the CLI say "The user doesn't want to proceed"
+        // and "stopped by user", whatever message goes with it, and kill a
+        // subagent. So it's only for Stop: anything else closing a card isn't
+        // Mike's decision, and agents repeat those words to him as if it were.
+        if (ans.stopped) return { behavior: 'deny', message: ans.message || 'Interrupted.', interrupt: true, toolUseID: o.toolUseID };
+        return { behavior: 'deny', message: cardClosedMessage(ans.message), toolUseID: o.toolUseID };
       default:
         return {
           behavior: 'deny',

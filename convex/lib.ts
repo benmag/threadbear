@@ -71,6 +71,16 @@ export async function checkPhoneToken(ctx: QueryCtx | MutationCtx, token: string
   return { id: row._id, name: row.name, expiresAt: row.expiresAt };
 }
 
+// A page size a caller asked for, as a whole number from 1 to `max`. Convex's
+// v.number() lets NaN and the infinities through, and Math.min/max/floor keep
+// NaN, so a loop bounded by `out.length >= want` would never stop: anything
+// that isn't a finite number is refused rather than clamped.
+export function pageLimit(limit: number | undefined, fallback: number, max: number): number {
+  if (limit === undefined) return fallback;
+  if (!Number.isFinite(limit)) throw new ConvexError({ kind: 'invalid', message: 'limit must be a number' });
+  return Math.max(1, Math.min(max, Math.floor(limit)));
+}
+
 export async function sha256(text: string): Promise<string> {
   const data = new TextEncoder().encode(text);
   const digest = await crypto.subtle.digest('SHA-256', data);

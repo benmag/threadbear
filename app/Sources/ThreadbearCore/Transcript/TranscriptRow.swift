@@ -318,6 +318,17 @@ public struct SecretItem: Sendable, Hashable {
     }
 }
 
+public extension RowContent {
+    /// The note a thread back from hibernating says so in. The runner words
+    /// it (`wake` in runner/src/runner/hibernation.ts), and every way it says
+    /// it starts like this. It's what Mike came to the thread to read, so it
+    /// never folds into the work above it, and it gets the bear.
+    var isWakeNote: Bool {
+        if case .note(let text) = self { return text.hasPrefix("Woke up") }
+        return false
+    }
+}
+
 public enum RowContent: Sendable, Hashable {
     case user(UserMessage)
     case assistant(TextItem)

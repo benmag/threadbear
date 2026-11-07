@@ -81,6 +81,7 @@ private struct IconButton: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
+        .busy(app.isBusy(BusyKey.projectIcon(project.id)))
         .onHover { hovering = $0 }
         .tip(Self.help(project))
     }
@@ -239,6 +240,7 @@ private struct TextSection: View {
                     .onTapGesture(count: 2) { start() }
             } else {
                 Text(TextSection.markdown(text))
+                    .environment(\.openURL, OpenGate.urlAction(files: .thisMac))
                     .font(.system(size: TypeScale.label))
                     .lineSpacing(zoomed(3))
                     .foregroundStyle(.primary)
@@ -293,8 +295,9 @@ private struct TasksSection: View {
                     HStack(spacing: zoomed(10)) {
                         Button { app.refreshProjectTasks(project.id, force: true) } label: { Image(systemName: "arrow.clockwise") }
                             .buttonStyle(.borderless)
+                            .busy(app.isBusy(BusyKey.projectTasks(project.id)))
                             .tip("Read the board from Notion again")
-                        Button { if let url = URL(string: project.tasks?.url ?? notion) { NSWorkspace.shared.open(url) } } label: { Image(systemName: "arrow.up.forward.square") }
+                        Button { if let url = URL(string: project.tasks?.url ?? notion) { OpenGate.openWeb(url) } } label: { Image(systemName: "arrow.up.forward.square") }
                             .buttonStyle(.borderless)
                             .tip("Open the board in Notion, where cards are moved")
                     }
@@ -372,7 +375,7 @@ private struct TaskBoard: View {
                     let shown = column.kind == .done ? Array(items.prefix(Self.doneShown)) : items
                     ForEach(shown) { TaskCard(task: $0, done: column.kind == .done) }
                     if shown.count < items.count, let url = URL(string: tasks.url) {
-                        PlainLink(title: "\(items.count - shown.count) more", help: "See them in Notion") { NSWorkspace.shared.open(url) }
+                        PlainLink(title: "\(items.count - shown.count) more", help: "See them in Notion") { OpenGate.openWeb(url) }
                             .font(.system(size: TypeScale.detail))
                             .foregroundStyle(Color(nsColor: Theme.faintText))
                             .padding(.horizontal, zoomed(4))
@@ -443,7 +446,7 @@ struct TaskCard: View {
         .background(hovering ? Color(nsColor: Theme.hoverFill) : Color(nsColor: Theme.codeBackground), in: RoundedRectangle(cornerRadius: zoomed(6)))
         .overlay(RoundedRectangle(cornerRadius: zoomed(6)).strokeBorder(Color(nsColor: Theme.cardBorder), lineWidth: 0.5))
         .contentShape(Rectangle())
-        .onTapGesture { if let url = URL(string: task.url) { NSWorkspace.shared.open(url) } }
+        .onTapGesture { if let url = URL(string: task.url) { OpenGate.openWeb(url) } }
         .onHover { hovering = $0 }
         .tip("Open in Notion")
     }
@@ -655,11 +658,17 @@ private struct PatchesSection: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    if let from = item.patch.file ?? item.patch.folder {
+                    if item.patch.file == nil, item.thread.isRemote, let from = item.patch.folder {
+                        // Another Mac's folder: nothing here to show it in.
+                        Text(from.abbreviatingHome)
+                            .font(.system(size: TypeScale.small))
+                            .foregroundStyle(Color(nsColor: Theme.faintText))
+                    } else if let from = item.patch.file ?? item.patch.folder {
                         PlainLink(title: from.abbreviatingHome, help: item.patch.file == nil ? "Show the folder in Finder" : "Open the file") {
                             if let file = item.patch.file {
-                                NSWorkspace.shared.open(URL(fileURLWithPath: file))
-                            } else {
+                                app.openFile(file, of: item.thread)
+                            } else if !item.thread.isRemote {
+                                // Another Mac's folder isn't one here to show.
                                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: from)])
                             }
                         }

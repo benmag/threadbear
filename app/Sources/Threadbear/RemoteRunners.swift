@@ -52,6 +52,7 @@ extension AppModel {
         let gone = next.values.filter { $0.isRemote && !listed.contains($0.id) && !liveRemote.contains($0.id) && !madeRemote.contains($0.id) }.map(\.id)
         if next != threads { threads = next }
         for id in gone { forget(id) }
+        threadCountMayHaveChanged()
     }
 
     /// A thread read through Convex has the table's row for a summary,
@@ -88,13 +89,12 @@ extension AppModel {
         return all.enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
     }
 
-    /// Moves a runner to where another is (a drag).
-    func moveRunner(_ id: String, to target: String) {
-        var ids = orderedRunnerIds
-        guard let from = ids.firstIndex(of: id), let to = ids.firstIndex(of: target), from != to else { return }
-        ids.remove(at: from)
-        ids.insert(id, at: to)
-        setRunnerOrder(ids)
+    /// One place up or down, for VoiceOver's actions on a runner's row (a
+    /// drag saves the whole order itself).
+    func moveRunner(_ id: String, by offset: Int) {
+        let ids = orderedRunnerIds
+        guard let from = ids.firstIndex(of: id), ids.indices.contains(from + offset) else { return }
+        setRunnerOrder(ReorderDrag.moving(ids, from: from, to: from + offset))
     }
 
     /// Saves the order through this Mac's runner, here at once.

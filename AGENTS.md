@@ -109,8 +109,13 @@ and ask the user what they use instead, rather than trying to reach them.
   confirms or rolls back, with the error) or shows a spinner and stops
   taking clicks until it lands. Never leave a button that looks idle and
   can be clicked twice. Mike, 6 Nov, after Start it on a cloud thread's
-  card sat for a second with nothing happening:
-  `ThreadSession.answering` and `Spinner` in Cells.swift are the pattern.
+  card sat for a second with nothing happening. The pieces:
+  `whileBusy(BusyKey...)` and `isBusy` (`AppModel+Busy.swift`) with `.busy(_:)`
+  on the control, `note:` for a click from a menu (it shows in the banner),
+  a guess with rollback like `update` and `updateProject`, and in the
+  transcript `ThreadSession.answering` with `Spinner` in Cells.swift.
+  `EveryClickShowsTests` fails on a new call that changes something on the
+  runner until you've done that and listed where it shows.
 - Every control gets a tooltip, with `.tip("…")` (SwiftUI) or `setTip` (AppKit).
   `.help` and `toolTip` never show in this app; TipsTests fails on them.
 - Transcript files and fixtures made from real sessions are private: keep them
@@ -171,6 +176,14 @@ For the real thing, use Tinker Desk's desktop from a throwaway copy, through
 `ssh tinker-desk '~/.local/bin/desk "<cmd>"'`, and remove the copy after. A
 scripted drag does start from a window of your own. It doesn't start from a
 screenshot's floating thumbnail, so that one still takes a person.
+
+Trackpad gestures are the same. Made-up events handed to a handler never meet a
+scroll view, and a scroll view that gets any of a gesture takes the rest itself,
+so swipes passed every test here and failed on Mike's trackpad twice (7 Nov).
+`app/Tools/post-gesture.swift` sends them through the window server. Someone
+else may be using that desktop: first check nothing's recording it
+(`pgrep -fl ffmpeg`) and that your window really is in front (`front`, then a
+look at the screen). Wake its screen with `caffeinate -u`, or the events go nowhere.
 
 ## Other people's PRs
 
@@ -239,7 +252,9 @@ if `tb` isn't found (an older runner, or outside a thread), use
   change outside `runner/`). With a check host set it copies the checkout
   there, runs it, brings back failed steps' logs and deletes the copy
   (`scripts/check-remote.sh`); one run at a time, so it may say it's
-  waiting for another thread's. If the host can't be reached it runs here
+  waiting for another thread's. A host short of disk is passed over (8 GiB
+  free for Swift, 2 otherwise), and if none has room the check fails and
+  names them. If the host can't be reached it runs here
   at low priority. `--e2e` always runs here, as it needs the claude login. It skips the deploy tests and BearDock's
   unless something they cover changed from main (`--all` runs them
   anyway). The app's part is under a minute with a warm `app/.build` and
