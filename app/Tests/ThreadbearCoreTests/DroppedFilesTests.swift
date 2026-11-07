@@ -29,6 +29,25 @@ final class DroppedFilesTests: XCTestCase {
         XCTAssertFalse(DroppedFiles.isTransient(keep.appendingPathComponent("a/shot.png"), temp: temp, keep: keep))
     }
 
+    /// A picture in Downloads, Desktop or Documents is read by the app, which
+    /// has been let in, not the runner, which may not have been.
+    func testProtectedFoldersAreCopiedForTheRunner() throws {
+        let home = temp.appendingPathComponent("home", isDirectory: true)
+        let downloads = home.appendingPathComponent("Downloads", isDirectory: true)
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+        let src = downloads.appendingPathComponent("Screenshot.png")
+        try Data([1, 2, 3]).write(to: src)
+        XCTAssertTrue(DroppedFiles.isInProtectedFolder(src, home: home))
+        XCTAssertTrue(DroppedFiles.isInProtectedFolder(home.appendingPathComponent("Desktop/a.png"), home: home))
+        XCTAssertFalse(DroppedFiles.isInProtectedFolder(home.appendingPathComponent("ThreadbearThreads/a.png"), home: home))
+        XCTAssertFalse(DroppedFiles.isInProtectedFolder(home.appendingPathComponent("DownloadsX/a.png"), home: home))
+
+        let out = DroppedFiles.keepingTransient([src], temp: temp, into: keep, home: home)
+        XCTAssertNotEqual(out[0], src)
+        XCTAssertEqual(out[0].lastPathComponent, "Screenshot.png")
+        XCTAssertEqual(try Data(contentsOf: out[0]), Data([1, 2, 3]))
+    }
+
     func testATempPictureIsCopiedUnderItsOwnName() throws {
         let src = temp.appendingPathComponent("Screenshot 2026-11-05 at 4.46.12\u{202F}PM.png")
         try Data([0x89, 0x50, 0x4E, 0x47]).write(to: src)

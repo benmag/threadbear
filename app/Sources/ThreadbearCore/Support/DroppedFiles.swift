@@ -40,8 +40,18 @@ public enum DroppedFiles {
     /// APFS clone, so a big recording costs nothing),
     /// keeping its name (the runner's messages name the file). One that
     /// can't be copied is passed on as it was, for the runner to explain.
-    public static func keepingTransient(_ urls: [URL], temp: URL = FileManager.default.temporaryDirectory, into folder: URL = keepFolder) -> [URL] {
-        urls.map { isTransient($0, temp: temp, keep: folder) ? kept($0, into: folder) : $0 }
+    public static func keepingTransient(_ urls: [URL], temp: URL = FileManager.default.temporaryDirectory, into folder: URL = keepFolder, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [URL] {
+        urls.map { isTransient($0, temp: temp, keep: folder) || isInProtectedFolder($0, home: home) ? kept($0, into: folder) : $0 }
+    }
+
+    /// Whether `url` is in Downloads, Desktop or Documents, which macOS lets
+    /// an app into only once it's been allowed. The app is usually let in
+    /// (the user dropped the file from there); the runner may not be, and
+    /// then can't read it. The app's copy is one it can.
+    public static func isInProtectedFolder(_ url: URL, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Bool {
+        let path = url.standardizedFileURL.path
+        let base = home.standardizedFileURL.path
+        return ["Downloads", "Desktop", "Documents"].contains { path.hasPrefix("\(base)/\($0)/") }
     }
 
     /// The same for files that go in as their path, which only move if
