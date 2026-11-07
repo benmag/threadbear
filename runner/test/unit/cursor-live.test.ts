@@ -71,12 +71,19 @@ test('a missing CLI is a banner only when that provider is in use, or nothing is
 test('a small job picks a fast Cursor model, and runner.json can name one', () => {
   const models = [
     { id: 'gpt-5.3-codex', model: 'gpt-5.3-codex', title: 'Codex 5.3' },
+    { id: 'gpt-5.3-codex-low-fast', model: 'gpt-5.3-codex-low-fast', title: 'Codex 5.3 Low Fast' },
     { id: 'composer-2.5', model: 'composer-2.5', title: 'Composer 2.5' },
     { id: 'composer-2.5-fast', model: 'composer-2.5-fast', title: 'Composer Fast' },
     { id: 'auto', model: 'auto', title: 'Auto' },
     { id: 'claude-opus-5-thinking-high', model: 'claude-opus-5-thinking-high', title: 'Claude Opus 5 1M Thinking' },
   ];
   assert.equal(pickCursorSmallModel(models), 'composer-2.5-fast');
+  const withAutoDefault = [
+    { id: 'auto', model: 'auto', title: 'Auto (current, default)' },
+    { id: 'composer-2.5', model: 'composer-2.5', title: 'Composer 2.5' },
+    { id: 'gpt-5.3-codex-low-fast', model: 'gpt-5.3-codex-low-fast', title: 'Codex low fast' },
+  ];
+  assert.equal(pickCursorSmallModel(withAutoDefault), 'gpt-5.3-codex-low-fast');
   assert.equal(pickCursorSmallModel(models, 'composer-2.5'), 'composer-2.5');
   assert.equal(pickCursorSmallModel([]), 'auto');
   const claudeOnly = [

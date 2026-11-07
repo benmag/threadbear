@@ -56,10 +56,11 @@ export function pickCursorSmallModel(models: ModelChoice[], chosen?: string): st
   const rows = native.length ? native : [{ id: 'auto', model: 'auto', title: 'Auto' }];
   const score = (m: ModelChoice) => {
     const s = `${m.id} ${m.title}`.toLowerCase();
-    if (/fast|flash|mini/.test(s)) return 0;
+    if (m.id === 'auto' || m.model === 'auto') return 100;
+    if (/-low-fast|-fast\b|\bfast\b|flash|mini/.test(s)) return 0;
     if (/composer/.test(s)) return 1;
-    if (m.id === 'auto') return 2;
-    if (/opus|thinking|codex|gpt-/.test(s)) return 9;
+    if (/gpt-/.test(s)) return 3;
+    if (/opus|thinking|codex/.test(s)) return 9;
     return 5;
   };
   return cursorCliModelId([...rows].sort((a, b) => score(a) - score(b) || a.id.localeCompare(b.id))[0]!.id);

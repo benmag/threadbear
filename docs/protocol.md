@@ -1451,8 +1451,10 @@ older runner's `openRouterKey`, `dailyBudgetUsd`, `spentTodayUsd` and
   text --model <id>` in that same folder, and the schema is written
   into the prompt. A login that answers that
   it's out of room counts as run dry, as it does for a turn, and the next
-  one is tried. At most 2 calls run at once, and each times out after 60
-  seconds.
+  one is tried. At most 2 calls run at once. Claude small jobs time out
+  after 60 seconds; Cursor and OpenCode after 180 (cold `agent` / OpenCode
+  startup can be slow). `models.poolTimeoutMs` in `runner.json` overrides
+  all of those.
 - **Private folders.** `models.privateFolders` in `runner.json` lists
   folders whose threads are never sent anywhere, for client work and the
   like. A call for a thread in one of them, or anywhere under one,

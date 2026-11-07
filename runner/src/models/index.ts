@@ -65,7 +65,8 @@ export type GenerateParams = Common & { prompt: string; system?: string; maxToke
 // pool: the pool whose logins answer; null for none (no small jobs).
 // cursorModel: which Cursor model, when a Cursor login answers. Unset
 // picks a fast one from that login's model list.
-export type ModelSettings = { privateFolders: string[]; pool?: string | null; cursorModel?: string; opencodeModel?: string };
+// poolTimeoutMs: override every small-job CLI timeout (milliseconds).
+export type ModelSettings = { privateFolders: string[]; pool?: string | null; cursorModel?: string; opencodeModel?: string; poolTimeoutMs?: number };
 
 // What the Models layer needs of the runner.
 export type PoolHost = {
@@ -95,9 +96,20 @@ export type ModelsOptions = {
 };
 
 // A CLI takes 3 to 5 seconds to start and answer, and each is a whole
-// process, so only a few at once.
-const POOL_TIMEOUT_MS = 60_000;
+// process, so only a few at once. Cursor and OpenCode often need longer
+// on cold start (auth, model load).
+export const POOL_TIMEOUT_MS = 60_000;
+export const CURSOR_POOL_TIMEOUT_MS = 180_000;
+export const OPENCODE_POOL_TIMEOUT_MS = 180_000;
 const POOL_MAX_IN_FLIGHT = 2;
+
+export function poolCallTimeoutMs(provider: Account['provider'], settings: ModelSettings, optsTimeoutMs?: number): number {
+  if (optsTimeoutMs !== undefined) return optsTimeoutMs;
+  if (settings.poolTimeoutMs !== undefined) return settings.poolTimeoutMs;
+  if (provider === 'cursor') return CURSOR_POOL_TIMEOUT_MS;
+  if (provider === 'opencode') return OPENCODE_POOL_TIMEOUT_MS;
+  return POOL_TIMEOUT_MS;
+}
 export const DEFAULT_POOL = 'claude';
 
 // A folder in the list, or anywhere under one.
@@ -284,7 +296,7 @@ export class Models {
             user: a.user,
             jsonSchema: a.jsonSchema?.schema,
             cwd: cliDir(this.opts.home),
-            timeoutMs: this.opts.poolTimeoutMs ?? POOL_TIMEOUT_MS,
+            timeoutMs: poolCallTimeoutMs(account.provider, settings, this.opts.poolTimeoutMs),
             registry: this.opts.registry,
           });
         } else if (account.provider === 'opencode') {
@@ -297,7 +309,7 @@ export class Models {
             user: a.user,
             jsonSchema: a.jsonSchema?.schema,
             cwd: cliDir(this.opts.home),
-            timeoutMs: this.opts.poolTimeoutMs ?? POOL_TIMEOUT_MS,
+            timeoutMs: poolCallTimeoutMs(account.provider, settings, this.opts.poolTimeoutMs),
             registry: this.opts.registry,
           });
         } else if (!this.opts.claudePath) {
@@ -311,7 +323,7 @@ export class Models {
             user: a.user,
             jsonSchema: a.jsonSchema?.schema,
             cwd: cliDir(this.opts.home),
-            timeoutMs: this.opts.poolTimeoutMs ?? POOL_TIMEOUT_MS,
+            timeoutMs: poolCallTimeoutMs(account.provider, settings, this.opts.poolTimeoutMs),
             registry: this.opts.registry,
           });
         }
