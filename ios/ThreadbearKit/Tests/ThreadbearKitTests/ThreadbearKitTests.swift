@@ -455,9 +455,15 @@ import UniformTypeIdentifiers
     @Test func sendRunsATurnAndReplies() async throws {
         let backend = FakeBackend(turnDelay: .milliseconds(10))
         _ = try await backend.send(threadId: "a3", text: "thanks")
-        try await Task.sleep(for: .milliseconds(100))
-        var iterator = backend.thread("a3").makeAsyncIterator()
-        let detail = try #require(try await iterator.next() ?? nil)
+        // Wait for the reply rather than a fixed time: a loaded machine is slower than 100 ms.
+        var found: ThreadDetail?
+        for _ in 0..<100 {
+            var iterator = backend.thread("a3").makeAsyncIterator()
+            found = try await iterator.next() ?? nil
+            if found?.thread.status == .idle { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let detail = try #require(found)
         #expect(detail.messages.suffix(2).map(\.role) == [.user, .assistant])
         #expect(detail.thread.status == .idle)
         #expect(detail.thread.unread)
