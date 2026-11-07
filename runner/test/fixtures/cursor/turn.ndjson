@@ -1,0 +1,11 @@
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"I'll read "},"messageId":"m1"}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"README."},"messageId":"m1"}
+{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"The file is short."},"messageId":"th1"}
+{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Read README.md","name":"read","kind":"read","status":"pending","rawInput":{"path":"README.md"}}
+{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"# Hi"}}]}
+{"sessionUpdate":"tool_call","toolCallId":"t2","title":"Edit a.ts","name":"edit","kind":"edit","status":"completed","rawInput":{"path":"a.ts"},"content":[{"type":"diff","path":"/work/a.ts","oldText":"a\n","newText":"b\n"}]}
+{"sessionUpdate":"tool_call","toolCallId":"e1","title":"end_turn","name":"end_turn","kind":"other","status":"completed","rawInput":{"summary":"Read it"},"content":[{"type":"content","content":{"type":"text","text":"Noted. Read the file."}}]}
+{"sessionUpdate":"plan","entries":[{"content":"Read README","priority":"high","status":"completed"},{"content":"Reply","priority":"medium","status":"pending"}]}
+{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"compact","description":"Compact the chat"}]}
+{"sessionUpdate":"usage_update","used":1200,"size":200000,"cost":{"amount":0.02,"currency":"USD"}}
+{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"ignored echo"}}

@@ -88,14 +88,14 @@ upgrade with an `Authorization` header that's wrong is turned away with HTTP
 ## Types
 
 ```ts
-type Provider = "claude" | "codex"
+type Provider = "claude" | "codex" | "cursor"
 
 type Account = {
-  id: string            // "claude-main", "claude-1", "codex-main", "codex-1", ...
+  id: string            // "claude-main", "claude-1", "codex-main", "cursor-main", ...
   provider: Provider
   title: string         // Claude: the email when known, else the id. Codex:
-                        // "Codex · <email>", so an app that only reads title
-                        // can tell it from a Claude login with the same address
+                        // "Codex · <email>", Cursor: "Cursor · <email>", so an
+                        // app that only reads title can tell them apart
   configDir: string
   defaultModel?: string // full id of the model a thread with no model runs on
                         // ("claude-fable-5-1"): the account's own setting

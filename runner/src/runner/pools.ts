@@ -117,8 +117,16 @@ export const poolsPart = {
   modelProvider(this: Runner, model: string): Provider | undefined {
     if (isClaudeModel(model)) return 'claude';
     const accounts = this.safeAccounts();
-    if (model.startsWith('gpt-') || accounts.some((a) => a.provider === 'codex' && modelRow(a, model))) return 'codex';
-    if (accounts.some((a) => a.provider === 'claude' && modelRow(a, model))) return 'claude';
+    const listed = (p: Provider) => accounts.some((a) => a.provider === p && modelRow(a, model));
+    if (listed('cursor') && !listed('codex')) return 'cursor';
+    if (model.startsWith('gpt-') || listed('codex')) {
+      // A gpt- id with no Codex login is Cursor's when Cursor is the only
+      // other CLI (a Mac that has Cursor and not Codex).
+      if (!accounts.some((a) => a.provider === 'codex') && accounts.some((a) => a.provider === 'cursor')) return 'cursor';
+      return 'codex';
+    }
+    if (listed('claude')) return 'claude';
+    if (listed('cursor')) return 'cursor';
     return undefined;
   },
 

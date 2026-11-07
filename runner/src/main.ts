@@ -34,6 +34,8 @@ import { ClaudeAdapter } from './adapters/claude/adapter.ts';
 import { ProcessRegistry } from './proc.ts';
 import { Runner } from './runner.ts';
 import { CodexAdapter } from './adapters/codex/adapter.ts';
+import { CursorAdapter } from './adapters/cursor/adapter.ts';
+import { findCursorBinary } from './adapters/cursor/cli.ts';
 import { resolveCodexBinary } from './adapters/codex/appserver.ts';
 import { checkSurface, testedVersion } from './adapters/codex/surface.ts';
 import { CliUpdates } from './updates/manager.ts';
@@ -60,7 +62,7 @@ import { detectMachineIcon } from './machine.ts';
 import { filesMethods } from './files.ts';
 import { devicesMethods } from './devices.ts';
 import { flushSentry, reportException, reportLoggedError, reportLoggedWarning, startSentry } from './sentry.ts';
-import { ALWAYS_ASK_TOOLS, NEVER_ASK_TOOLS, RICH_BLOCKS_LINE, SERVER_NAME, buildThreadbearTools, threadbearMcpServer, type RemoteControl } from './threadbear-mcp.ts';
+import { ALWAYS_ASK_TOOLS, NEVER_ASK_TOOLS, RICH_BLOCKS_LINE, SERVER_NAME, buildThreadbearTools, serverInstructions, threadbearMcpServer, type RemoteControl } from './threadbear-mcp.ts';
 import { CrossRunner } from './cross-runner.ts';
 import { EFFORT_LEVELS, ErrorCode, RpcError, type EffortLevel } from './protocol.ts';
 
@@ -213,6 +215,35 @@ async function main(): Promise<void> {
     onNotice: (text) => runner.notice('warning', text),
     extraGuidance: () => (experimentOn(cfg.home, 'richBlocks') ? RICH_BLOCKS_LINE : ''),
   });
+  // One `agent acp` process per live Cursor thread. The same threadbear
+  // tools Claude gets in-process are served over HTTP/SSE, which is what
+  // this CLI's ACP handshake accepts.
+  const cursorTools = (threadId: string) =>
+    buildThreadbearTools(router(), threadId, Date.now, scheduleControl(), projectControl(), appRestarts, {
+      provider: 'cursor',
+      bulletReplies: () => cfg.bulletReplies,
+      oneReply: () => cfg.oneReply,
+      pocket: pocketControl,
+      gateway: () => cfg.connectorsUrl,
+      gatewayHealth,
+      scheduleChecks: () => experimentOn(cfg.home, 'scheduleChecks'),
+      remote: remoteControl,
+    });
+  const cursorGuidance = (threadId: string) =>
+    serverInstructions(threadId, {
+      one: cfg.oneReply,
+      bulletReplies: cfg.bulletReplies,
+      pocket: Boolean(pocketControl?.()),
+      projects: true,
+      richBlocks: experimentOn(cfg.home, 'richBlocks'),
+    });
+  const cursor = new CursorAdapter({
+    binary: () => findCursorBinary({ explicit: cfg.cursorPath }),
+    registry,
+    log,
+    toolsFor: cursorTools,
+    guidance: cursorGuidance,
+  });
   // The runner's own small-model calls, on the settings' Claude pool.
   const models = new Models({
     home: cfg.home,
@@ -233,7 +264,7 @@ async function main(): Promise<void> {
     atMac: () => atMac,
     config: cfg,
     store,
-    adapters: { claude, codex },
+    adapters: { claude, codex, cursor },
     accounts,
     // A draining runner's readings go to the primary, which owns
     // usage.json (docs/protocol.md, "Handovers").

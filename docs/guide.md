@@ -1338,7 +1338,7 @@ skip it. A Mac that joined a Threadbear you already use (setup's
 While that first thread works, Finish setting up shows what's left after
 setup:
 
-- **Start your first thread**, which shows your Claude Code or Codex login
+- **Start your first thread**, which shows your Claude Code, Codex or Cursor login
   works. If there's no login on the Mac yet, it says how to add one.
 - **Pair your iPhone**, so you can ask questions and steer your threads
   while you're out (see [Your phone and a browser](#phone-and-browser)).

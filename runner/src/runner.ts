@@ -225,7 +225,10 @@ export type AccountPicker = (accounts: Account[], lastUsedId: string | undefined
 
 // AccountRegistry, plus the onChange D adds (fired when a rescan finds a
 // different list).
-export type AccountSource = Pick<AccountRegistry, 'list' | 'get' | 'learn'> & { onChange?(fn: () => void): () => void };
+export type AccountSource = Pick<AccountRegistry, 'list' | 'get' | 'learn'> & {
+  onChange?(fn: () => void): () => void;
+  noteCursor?(login: { email?: string } | null): void;
+};
 
 // The Codex adapter reports the binaries its live processes run, so E only
 // deletes version folders nothing uses. Not on AgentAdapter, since only
@@ -634,6 +637,7 @@ export class Runner {
   accountsTimer?: TimerHandle;
   accountsSentAt = -Infinity;
   accountsShown?: string; // the last list clients were sent (or got in hello's time)
+  private cursorLoginAt = 0;
   // E's last Codex status, to notice an update activating (or a first
   // copy arriving where there was none) as against E working out what's
   // installed when it starts.
@@ -749,11 +753,27 @@ export class Runner {
     this.accountsShown = accountsKey(this.safeAccounts());
     this.poolsShown = JSON.stringify(this.pools());
     void this.probeModels();
+    void this.refreshCursorLogin();
     // Usage readings and a rescan that finds another list both reach
     // clients through the same throttle as what the probes learn.
     if (this.usage?.onChange) this.unsubs.push(this.usage.onChange(() => this.accountsChanged()));
     if (this.accounts.onChange) this.unsubs.push(this.accounts.onChange(() => this.accountsChanged()));
     this.armRescan();
+  }
+
+  // `cursor-agent status`, at most once a minute. A login that appears or
+  // goes is a new account list. No Cursor adapter: nothing to ask.
+  async refreshCursorLogin(): Promise<void> {
+    const cursor = this.adapters.cursor as { login?: () => Promise<{ email?: string } | null> } | undefined;
+    if (!cursor?.login) return;
+    if (this.clock.now() - this.cursorLoginAt < 60_000) return;
+    this.cursorLoginAt = this.clock.now();
+    try {
+      const login = await cursor.login();
+      this.accounts.noteCursor?.(login);
+    } catch (e) {
+      this.log.warn('could not check the Cursor login', { error: String(e) });
+    }
   }
 
   // Asks each account's CLI for its model list, one account at a time so
@@ -808,6 +828,7 @@ export class Runner {
     const list = this.safeAccounts();
     const fresh = new Set(list.filter((a) => !this.probed.has(a.id)).map((a) => a.id));
     if (fresh.size) void this.probeModels((a) => fresh.has(a.id));
+    void this.refreshCursorLogin();
     if (accountsKey(list) !== this.accountsShown) this.accountsChanged();
   }
 
@@ -1131,7 +1152,7 @@ export class Runner {
   noticesForNewClient(): { level: 'info' | 'warning' | 'error'; message: string }[] {
     const out = this.clock.now() - this.startedAt < STARTUP_NOTICE_MS ? [...this.startupNotices] : [];
     if (!fs.existsSync(this.cfg.claudePath)) {
-      out.push({ level: 'error', message: `The claude CLI isn't at ${this.cfg.claudePath}, so no turn can start. Install Claude Code, or set claudePath in runner.json.` });
+      out.push({ level: 'error', message: `The claude CLI isn't at ${this.cfg.claudePath}, so Claude threads can't start. Install Claude Code, or set claudePath in runner.json.` });
     }
     return out;
   }
@@ -3400,11 +3421,15 @@ export function oneLine(text: string, max: number): string {
 
 // A provider's name in notes.
 export function providerName(p: Provider): string {
-  return p === 'codex' ? 'Codex' : 'Claude';
+  if (p === 'codex') return 'Codex';
+  if (p === 'cursor') return 'Cursor';
+  return 'Claude';
 }
 
 function cliName(p: Provider): string {
-  return p === 'codex' ? 'Codex' : 'Claude Code';
+  if (p === 'codex') return 'Codex';
+  if (p === 'cursor') return 'Cursor';
+  return 'Claude Code';
 }
 
 // Claude's own ids: its aliases, and anything starting claude- (with or

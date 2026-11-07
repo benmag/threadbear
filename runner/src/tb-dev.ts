@@ -564,7 +564,7 @@ function access(t: ThreadSummary): string {
 // tb models: one row per model, the default starred, with its effort
 // levels; then what a new thread on the account runs on.
 export function formatModels(a: Account, defaults?: RunnerDefaults): string {
-  const lines = [`${a.id} (${a.provider === 'codex' ? 'Codex' : 'Claude'})`];
+  const lines = [`${a.id} (${a.provider === 'codex' ? 'Codex' : a.provider === 'cursor' ? 'Cursor' : 'Claude'})`];
   const isDefault = (m: { id: string; model: string }) => a.defaultModel !== undefined && (m.id === a.defaultModel || m.model === a.defaultModel);
   if (!a.models?.length) lines.push("  The CLI hasn't been asked for its models yet.");
   for (const m of a.models ?? []) {
@@ -583,7 +583,7 @@ export function formatSelf(t: ThreadSummary): string {
     t.id,
     t.title,
     `Status: ${t.status}${t.live ? ', CLI live' : ''}`,
-    `Account: ${t.accountId} (${t.provider === 'codex' ? 'Codex' : 'Claude'}), ${t.model ? `model ${t.model}` : 'default model'}${t.modelInUse ? ` (${t.modelInUse})` : ''}, effort ${t.effort ?? 'default'}${t.effortInUse ? ` (${t.effortInUse})` : ''}, ${access(t)}`,
+    `Account: ${t.accountId} (${t.provider === 'codex' ? 'Codex' : t.provider === 'cursor' ? 'Cursor' : 'Claude'}), ${t.model ? `model ${t.model}` : 'default model'}${t.modelInUse ? ` (${t.modelInUse})` : ''}, effort ${t.effort ?? 'default'}${t.effortInUse ? ` (${t.effortInUse})` : ''}, ${access(t)}`,
     `Folder: ${t.cwd}`,
     `Events: ${t.lastSeq}`,
   ];

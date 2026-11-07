@@ -1093,7 +1093,9 @@ struct ModelPickerView: View {
                 .frame(maxHeight: Self.listMaxHeight(pools: pools))
                 .fixedSize(horizontal: false, vertical: true)
                 Divider()
-                EffortRow(levels: settings.effortLevels, chosen: settings.effectiveEffort) { settings.setEffort($0) }
+                if !settings.effortLevels.isEmpty {
+                    EffortRow(levels: settings.effortLevels, chosen: settings.effectiveEffort) { settings.setEffort($0) }
+                }
                 if pools, settings.pinnedLine != nil {
                     Divider()
                     PoolFooter(settings: settings, column: column, showPinned: { columnId = ThreadSettings.pinnedColumn },

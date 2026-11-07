@@ -26,7 +26,7 @@ struct SetupChecklist: Equatable {
     /// this install (no Convex mirror, so nothing for a phone to read) are
     /// left out rather than shown stuck.
     var items: [(item: SetupItem, done: Bool)]
-    /// No Claude Code or Codex login found: the first thread can't run.
+    /// No Claude Code, Codex or Cursor login found: the first thread can't run.
     var noLogin: Bool
 
     var left: Int { items.filter { !$0.done }.count }
@@ -187,8 +187,8 @@ private struct SetupRow: View {
         switch item {
         case .firstThread:
             noLogin
-                ? "There's no Claude Code or Codex login on this Mac yet. Run claude or codex in Terminal and log in, then come back."
-                : "It shows your Claude Code or Codex login works. Try asking what's in the folder."
+                ? "There's no Claude Code, Codex or Cursor login on this Mac yet. Run claude, codex or agent in Terminal and log in, then come back."
+                : "It shows your Claude Code, Codex or Cursor login works. Try asking what's in the folder."
         case .phone: "Ask questions and steer your threads while you're out, and see how they're getting on."
         case .website: "Check on your threads from any browser, with a link for each."
         }

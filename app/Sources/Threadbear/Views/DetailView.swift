@@ -833,7 +833,7 @@ struct SignInBanner: View {
 
     var body: some View {
         if let account = app.signInAccount(for: thread) {
-            let name = account.provider == "codex" ? "Codex" : "Claude"
+            let name = account.provider == "codex" ? "Codex" : account.provider == "cursor" ? "Cursor" : "Claude"
             HStack(spacing: zoomed(8)) {
                 Image(systemName: "person.crop.circle.badge.exclamationmark").foregroundStyle(.orange)
                 Text("\(name) needs you to sign in again.").lineLimit(1)

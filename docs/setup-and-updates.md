@@ -82,7 +82,7 @@ always-on machine.
 `./threadbear setup` from a clone, written so an agent could also run it:
 
 1. Checks the basics: Xcode command line tools, Tailscale installed and logged in,
-   Claude Code or Codex logged in. Downloads its own Node into the data folder rather
+   Claude Code, Codex or the Cursor CLI logged in. Downloads its own Node into the data folder rather
    than relying on nvm.
 2. Signs you in to Convex (`npx convex login`, once, in the browser), makes a
    `threadbear` project in your account with a production deployment, makes the

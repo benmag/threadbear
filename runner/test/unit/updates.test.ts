@@ -105,7 +105,7 @@ function setup(o: { latest?: Partial<Record<Provider, string>>; env?: NodeJS.Pro
   fs.mkdirSync(path.join(home, 'run'), { recursive: true });
   const claude = fakeClaude(root);
   const npm = fakeNpm(root);
-  const cfg = testConfig(home, { claudePath: claude.claudePath, claudeMainDir: path.join(root, 'claude-main'), cliUpdates: { claude: 'auto', codex: 'auto', checkMinutes: 60, keepCodexVersions: 2 }, ...o.cfg });
+  const cfg = testConfig(home, { claudePath: claude.claudePath, claudeMainDir: path.join(root, 'claude-main'), cliUpdates: { claude: 'auto', codex: 'auto', cursor: 'off', checkMinutes: 60, keepCodexVersions: 2 }, ...o.cfg });
   const latest = { claude: '2.1.311', codex: '0.165.0', ...o.latest };
   const fetched: string[] = [];
   const fetchText = async (url: string) => {
@@ -403,7 +403,7 @@ test('policies: the app\'s choice persists; THREADBEAR_CLI_UPDATES=off and a han
 
   const off = setup({ env: { PATH: '/usr/bin:/bin', THREADBEAR_CLI_UPDATES: 'off' } });
   off.u.setPolicy('claude', 'auto');
-  assert.deepEqual(off.u.list().map((c) => c.policy), ['off', 'off']);
+  assert.deepEqual(off.u.list().map((c) => c.policy), ['off', 'off', 'off']);
   // A copy installed earlier isn't used: tests and dev runners use the fallback.
   fs.mkdirSync(path.join(off.tools, '0.164.0', 'node_modules', '@openai', 'codex'), { recursive: true });
   fs.writeFileSync(path.join(off.tools, '0.164.0', 'node_modules', '@openai', 'codex', 'package.json'), '{}');

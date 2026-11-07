@@ -88,11 +88,13 @@ File references are where to look.
   lock from before rebasing until the check and fast-forward finish.
   Another landing waits; exiting, including a crash, releases the lock.
 - **The runner** listens on `127.0.0.1:8797` only, and needs a token
-  (`runner/src/config.ts`). It starts the official `claude` and `codex`
-  CLIs for your threads.
+  (`runner/src/config.ts`). It starts the official `claude`, `codex` and
+  `agent` (`cursor-agent`) CLIs for your threads. Cursor runs as
+  `agent acp` in the thread's folder.
 - **Agents get full access by default.** Claude runs with
-  `bypassPermissions` and Codex with `danger-full-access`. "Ask before
-  edits" is a choice for each thread.
+  `bypassPermissions` and Codex with `danger-full-access`. Cursor's
+  `session/request_permission` is answered allow-once without a card in
+  that mode. "Ask before edits" is a choice for each thread.
 - **Your phone and browser can drive the Mac.** A paired iPhone or a
   signed-in browser can start threads in any folder, send messages and
   answer approvals, through your Convex deployment (`runner/src/sync.ts`).
@@ -136,8 +138,10 @@ File references are where to look.
   `runner/bring-in.json` in the data folder.
 - **CLI updates** (`runner/src/updates/`): every hour it checks for new
   Claude Code and Codex versions and installs them. If you don't point it
-  at your own Codex, it installs one into the data folder.
-  `THREADBEAR_CLI_UPDATES=off` stops this.
+  at your own Codex, it installs one into the data folder. When the Cursor
+  CLI is installed it runs `agent update` on the same timer (Cursor's own
+  installer; Threadbear does not download it). `THREADBEAR_CLI_UPDATES=off`
+  stops this.
 - **Small model calls** (`runner/src/models/`): thread titles, filing
   threads into projects (the librarian, every 5 minutes) and similar jobs
   send short excerpts of your threads to `claude -p` on your own logins.
@@ -212,8 +216,8 @@ File references are where to look.
 | Convex (the Convex panel) | yours | Only for a thread in a Convex project, when its Convex panel opens: the runner's Convex CLI asks api.convex.dev for the project's deployments and a deploy key, the runner asks the deployment whether a kept key still works (`/api/check_admin_key`), and the panel loads Convex's embedded dashboard (dashboard-embedded.convex.dev) with that key. Sign in to Convex goes to auth.convex.dev. (`runner/src/convex-keys.ts`) |
 | Your other Macs, over ssh | yours | Only when you run `tb runner add <name> --ssh <host>` or `tb runner check --ssh <host>` on your first Mac: it reads that Mac's Threadbear `runner.json`, writes its id and the deployment's address there if it hasn't them, writes its new key into that Mac's `secrets/convex-key`, and looks whether that Mac has a deploy key, Convex panel keys or a Convex login (names only, never a key), through your own ssh setup with agent and port forwarding off (`runner/src/runner-keys.ts`). `tb runner audit` asks this Mac's runner for its threads' last seqs and your deployment for what the main key made. `tb runner rotate-owner` sets env vars on your deployment with your deploy key, and, if you give it a Convex team access token for that run (`CONVEX_TEAM_TOKEN`, never kept), asks api.convex.dev for the deployment's deploy keys (their names and dates) before it rotates. |
 | GitHub | Mike's repo | Release tags fetched every 6 hours; the fork at setup |
-| downloads.claude.ai, registry.npmjs.org | Anthropic, npm | CLI version checks and installs; `npm ci` |
-| Anthropic, OpenAI | yours | Your threads, through the official CLIs on your own logins. With the `labReview` experiment on (off by default), a thread's code change, with your message and the agent's reply, goes to your other provider's CLI as a review thread, as if you'd started one. After a turn fails because the API couldn't be reached, the runner itself opens (and straight away closes) a connection to api.anthropic.com or chatgpt.com on port 443, at most once a minute, until one opens and the thread carries on. Nothing is sent over it (`runner/src/net-probe.ts`). |
+| downloads.claude.ai, registry.npmjs.org, cursor.com | Anthropic, npm, Cursor | CLI version checks and installs (`agent update` hits Cursor's install host); `npm ci` |
+| Anthropic, OpenAI, Cursor | yours | Your threads, through the official CLIs on your own logins. Cursor's CLI (`agent acp`) talks to `api2.cursor.sh` (its default `--endpoint`). With the `labReview` experiment on (off by default), a thread's code change, with your message and the agent's reply, goes to your other provider's CLI as a review thread, as if you'd started one. After a turn fails because the API couldn't be reached, the runner itself opens (and straight away closes) a connection to api.anthropic.com, chatgpt.com or api2.cursor.sh on port 443, at most once a minute, until one opens and the thread carries on. Nothing is sent over it (`runner/src/net-probe.ts`). |
 | Mike's push relay | Mike's | Only when a paired iPhone gets a notification. It's sent from your Convex deployment, not the Mac. The text is encrypted for the phone; the relay sees the device token and thread id (`convex/push.ts`, `docs/push-relay.md`). The first time, your deployment registers with it, giving its own address; the relay keeps that address and checks it by posting a one-time code back to your deployment's `/relay/verify` (`convex/http.ts`). |
 | A Connectors gateway | whoever runs it | Only if one is set in `runner.json` or `~/.claude.json`. Its `/health` every few minutes (and once more at the end of a turn where a call to one of its services failed, to see if it needs signing in), and for a project with a Notion page, a Notion read or two every 5 minutes for its task board (`runner/src/notion-tasks.ts`), signed with the header the `headersHelper` command in that `connectors` entry prints, which it runs for each read |
 | Sentry | Mike's | Nothing from your copy. Only a copy whose `origin` is Mike's own repo reports errors or uploads the app's debug symbols (`runner/src/sentry.ts`, `app/Sources/Threadbear/CrashReporting.swift`, `app/build-app.sh`). The App Store iPhone app sends anonymous crash reports. |
