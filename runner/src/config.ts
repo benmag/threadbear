@@ -112,7 +112,7 @@ export type Config = {
   // The runner's own model calls (src/models/): the pool whose Claude
   // logins answer them (null: none, so no small jobs) and folders whose
   // threads are never sent.
-  models: { pool: string | null; privateFolders: string[] };
+  models: { pool: string | null; privateFolders: string[]; cursorModel?: string };
   // The Convex mirror (src/sync.ts): the project's URL, whether it's on,
   // the name the phone shows for this runner and its id (made once).
   // THREADBEAR_SYNC=off turns it off for tests and dev runners.
@@ -167,7 +167,7 @@ export type RunnerJson = {
   // bringIn: how often a fork's runner starts a thread to bring in Mike's
   // releases (bring-in.ts): every so many days, 'important' or 'off'.
   releases?: { publish?: boolean; signingKey?: string; bringIn?: number | 'important' | 'off' };
-  models?: { pool?: string | null; privateFolders?: string[] };
+  models?: { pool?: string | null; privateFolders?: string[]; cursorModel?: string };
   // icon: an SF Symbol for this runner in lists (machine.ts works one out).
   // rpcUrl: how a Mac app reaches this runner over the tailnet (step 6 part 2).
   // full: true sends tool output to your Convex deployment as well, scrubbed first
@@ -375,10 +375,14 @@ export const DEFAULT_SMALL_MODEL_POOL = 'claude';
 export function modelSettingsFrom(json: RunnerJson): Config['models'] {
   const folders = json.models?.privateFolders;
   const pool = json.models?.pool;
+  const cursorModel = json.models?.cursorModel;
   return {
     // Absent or not a string: the Claude pool. null is Mike saying none.
+    // A Mac with no Claude login and a Cursor one still runs small jobs
+    // on Cursor (models/index.ts); this stays "claude" until it's changed.
     pool: pool === null ? null : typeof pool === 'string' && pool.trim() ? pool.trim() : DEFAULT_SMALL_MODEL_POOL,
     privateFolders: Array.isArray(folders) ? folders.filter((f): f is string => typeof f === 'string' && f.trim() !== '') : [],
+    ...(typeof cursorModel === 'string' && cursorModel.trim() ? { cursorModel: cursorModel.trim() } : {}),
   };
 }
 

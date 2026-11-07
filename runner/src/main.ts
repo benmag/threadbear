@@ -32,7 +32,7 @@ import { ThreadStore } from './store.ts';
 import { AccountRegistry } from './accounts.ts';
 import { ClaudeAdapter } from './adapters/claude/adapter.ts';
 import { ProcessRegistry } from './proc.ts';
-import { Runner } from './runner.ts';
+import { Runner, missingCliBanner } from './runner.ts';
 import { CodexAdapter } from './adapters/codex/adapter.ts';
 import { CursorAdapter } from './adapters/cursor/adapter.ts';
 import { findCursorBinary } from './adapters/cursor/cli.ts';
@@ -216,8 +216,8 @@ async function main(): Promise<void> {
     extraGuidance: () => (experimentOn(cfg.home, 'richBlocks') ? RICH_BLOCKS_LINE : ''),
   });
   // One `agent acp` process per live Cursor thread. The same threadbear
-  // tools Claude gets in-process are served over HTTP/SSE, which is what
-  // this CLI's ACP handshake accepts.
+  // tools Claude gets in-process are served at an HTTP POST url. This CLI
+  // keeps only that url and POSTs JSON-RPC to it (an SSE GET url 404s).
   const cursorTools = (threadId: string) =>
     buildThreadbearTools(router(), threadId, Date.now, scheduleControl(), projectControl(), appRestarts, {
       provider: 'cursor',
@@ -244,13 +244,15 @@ async function main(): Promise<void> {
     toolsFor: cursorTools,
     guidance: cursorGuidance,
   });
-  // The runner's own small-model calls, on the settings' Claude pool.
+  // The runner's own small-model calls, on the settings' pool (Claude, or
+  // Cursor when that is the only login).
   const models = new Models({
     home: cfg.home,
     clock: realClock,
     log,
     settings: () => cfg.models,
     claudePath: cfg.claudePath,
+    cursorBin: () => findCursorBinary({ explicit: cfg.cursorPath }),
     registry,
     poolHost: { pool: (id) => runner.smallModelPool(id), ranDry: (id) => runner.noteRanDry(id) },
   });
@@ -688,8 +690,9 @@ async function main(): Promise<void> {
     updates: () => (draining ? undefined : runnerUpdates()),
     appHello: (build) => appRestarts.appHello(build),
     helloNotices: () => {
-      // Like a missing claude: said to every client, until it's there.
-      const noCodex = missingCodex(updates.codexBinary(), cfg);
+      // A missing Codex binary, only when a Codex login is in use. A Mac
+      // whose only CLI is Cursor does not get told to install Codex.
+      const noCodex = missingCliBanner('codex', runner.safeAccounts()) ? missingCodex(updates.codexBinary(), cfg) : undefined;
       // Pushes failing (sync.ts notePushFailing) is said once as it starts;
       // an app that wasn't connected then hears it here.
       const pushFailing = sync.status().pushFailing;

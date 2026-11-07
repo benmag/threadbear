@@ -655,14 +655,16 @@ It looks after a thread's first message and when a turn ends, then catches
 up at most every 20 minutes while the thread keeps going. A catch-up after
 only a quick reply is skipped without asking anything.
 
-Each look is one short call to Haiku, Claude's small, cheap model, rather
-than the model your threads run on. It runs on one of your own Claude
-logins: the one the pool would pick next in the pool chosen under Runs on (the
-same pool that writes thread titles, also in Settings › Models), and it
-counts towards that login's usage like any other call. When every login in
-the pool is out of room it waits, and with only Codex logins it doesn't
-run at all. Threads in a private folder (Settings › Models) are never sent
-to it.
+Each look is one short call on a small, fast model, rather than the model
+your threads run on. On a Claude login that model is Haiku. On a Cursor
+login it is a fast model from that login (or the one named
+`models.cursorModel` in runner.json). It runs on the login the pool would
+pick next in the pool chosen under Runs on (the same pool that writes
+thread titles, also in Settings › Models), and it counts towards that
+login's usage like any other call. When every login in the pool is out of
+room it waits, and with only Codex logins it doesn't run at all. When
+Cursor is the only CLI signed in, Runs on is the Cursor pool. Threads in
+a private folder (Settings › Models) are never sent to it.
 
 The Librarian view lists what it did and what it will look at next. Turn
 off Look at threads there to pause it; what's queued waits until you turn
@@ -792,9 +794,10 @@ to continue, with the conversation carried across. It pins the thread to
 that Codex login. Anything you've typed in the message field stays there.
 The switch happens only when you click.
 
-Titles, the librarian and Wake when… run on a Claude login, so with only
-Codex they don't happen: threads keep the first line of their first message
-as their title.
+Titles, the librarian and Wake when… run on a Claude or Cursor login, so
+with only Codex they don't happen: threads keep the first line of their
+first message as their title. On Claude the call uses Haiku. On Cursor it
+uses a fast model from that login.
 
 Logins are grouped into pools, one for Claude and one for Codex to begin
 with (Settings > Pools). A new thread in a pool starts on the login with room whose

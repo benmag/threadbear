@@ -9,7 +9,7 @@ import type { AdapterOutput, TurnResult } from '../types.ts';
 import type { NormalizerContext } from '../context.ts';
 import { truncateResultText } from '../context.ts';
 import { diffLines } from '../../diff.ts';
-import { toolTitle } from '../../tools.ts';
+import { toolKind, toolTitle } from '../../tools.ts';
 import type { SlashCommand } from '../../slash-commands.ts';
 
 type Any = Record<string, any>;
@@ -44,6 +44,7 @@ export class CursorNormalizer {
   private open = new Map<string, OpenTool>();
   private commands: SlashCommand[] = [];
   private costUsd?: number;
+  private turnUsage?: Record<string, number>;
   private errorKind?: TurnResult['errorKind'];
   private errorText?: string;
   private started = Date.now();
@@ -106,7 +107,16 @@ export class CursorNormalizer {
   }
 
   // The session/prompt response. Closes any text still streaming and the turn.
-  finish(stopReason: string | undefined): AdapterOutput[] {
+  // A string is the stop reason. An object is the session/prompt result:
+  // this build (2026.11.05) returns only `{ stopReason }`, and the session
+  // presenter never sends usage_update. If a result does carry usage, or a
+  // usage_update arrived, it is recorded. Nothing is filled in otherwise.
+  finish(stopOrResult?: string | Any): AdapterOutput[] {
+    const body = typeof stopOrResult === 'object' && stopOrResult ? stopOrResult : undefined;
+    const stopReason = typeof stopOrResult === 'string' ? stopOrResult : typeof body?.stopReason === 'string' ? body.stopReason : undefined;
+    const reported = usageFrom(body);
+    if (reported.costUsd !== undefined) this.costUsd = reported.costUsd;
+    const usage = reported.usage ?? this.turnUsage;
     const out: AdapterOutput[] = [];
     this.flushTexts(out);
     for (const [id, tool] of this.open) {
@@ -138,6 +148,7 @@ export class CursorNormalizer {
       durationMs: Math.max(0, Date.now() - this.started),
       ...(this.runnerId ? { answers: this.runnerId } : {}),
       ...(this.costUsd !== undefined ? { totalCostUsd: this.costUsd } : {}),
+      ...(usage ? { usage } : {}),
       ...(error ? { error } : {}),
       ...(errorKind ? { errorKind } : {}),
     };
@@ -172,10 +183,11 @@ export class CursorNormalizer {
     const id = typeof update.toolCallId === 'string' ? update.toolCallId : '';
     if (!id) return;
     const prev = this.open.get(id);
-    const name = protocolToolName(typeof update.name === 'string' ? update.name : (prev?.name ?? ''), this.tools);
     const input = inputOf(update.rawInput) ?? prev?.input ?? {};
-    const kind = (typeof update.kind === 'string' && TOOL_KIND[update.kind]) || prev?.kind || 'other';
-    const title = typeof update.title === 'string' && update.title ? update.title : prev?.title || toolTitle(name, input, this.ctx.cwd);
+    const named = cursorToolIdentity(update, this.tools, this.ctx.cwd);
+    const name = named.name || prev?.name || 'tool';
+    const kind = named.kind !== 'other' ? named.kind : prev?.kind || named.kind;
+    const title = named.title || prev?.title || toolTitle(name, input, this.ctx.cwd);
     const tool: OpenTool = { name: name || prev?.name || 'tool', title, input, kind, emitted: prev?.emitted ?? false };
     const status = typeof update.status === 'string' ? update.status : fresh ? 'pending' : '';
     if (!tool.emitted && (fresh || status === 'in_progress' || status === 'completed' || status === 'failed')) {
@@ -254,6 +266,9 @@ export class CursorNormalizer {
     const amount = update.cost && typeof update.cost === 'object' ? numberOf((update.cost as Any).amount) : undefined;
     const currency = update.cost && typeof update.cost === 'object' ? (update.cost as Any).currency : undefined;
     if (amount !== undefined && (currency === 'USD' || currency === 'usd')) this.costUsd = amount;
+    const reported = usageFrom(update);
+    if (reported.usage) this.turnUsage = { ...this.turnUsage, ...reported.usage };
+    if (reported.costUsd !== undefined) this.costUsd = reported.costUsd;
   }
 
   private noteError(text: string): void {
@@ -283,11 +298,44 @@ export function commandsOf(list: unknown): SlashCommand[] {
   return out;
 }
 
+// Cursor's ACP tool_call often has a kind and a title and no `name` (the
+// presenter sends toolCallId, title, kind, rawInput). Without a name the
+// row was "tool". Kind and title pick the same names Claude's tools use.
+export function cursorToolIdentity(update: Any, threadbear: Set<string>, cwd: string): { name: string; kind: ToolKind; title: string } {
+  const input = inputOf(update.rawInput) ?? {};
+  const acpKind = (typeof update.kind === 'string' && TOOL_KIND[update.kind]) || 'other';
+  const given = typeof update.name === 'string' ? update.name.trim() : '';
+  const titleIn = typeof update.title === 'string' ? update.title.trim() : '';
+  let name = given && given !== 'tool' ? given : '';
+  if (!name) {
+    const fromTitle = /^(Read|Edit|Write|Bash|Grep|Glob|LS|Delete|WebFetch|WebSearch|end_turn)\b/i.exec(titleIn);
+    if (fromTitle) name = fromTitle[1];
+    else if (/end[_ ]?turn/i.test(`${titleIn} ${given}`)) name = 'end_turn';
+    else if (acpKind === 'command' || typeof input.command === 'string') name = 'Bash';
+    else if (acpKind === 'read') name = 'Read';
+    else if (acpKind === 'edit') name = typeof input.fileText === 'string' || typeof input.contents === 'string' ? 'Write' : 'Edit';
+    else if (acpKind === 'search') name = typeof input.pattern === 'string' || typeof input.query === 'string' ? 'Grep' : 'Glob';
+    else if (acpKind === 'web') name = 'WebFetch';
+    else if (isEndTurnInput(input)) name = 'end_turn';
+  }
+  name = protocolToolName(name, threadbear);
+  const kind: ToolKind = name.startsWith('mcp__') ? 'mcp' : toolKind(name) !== 'other' ? toolKind(name) : acpKind;
+  const title = titleIn && titleIn !== 'tool' ? titleIn : toolTitle(name || 'tool', input, cwd);
+  return { name: name || 'tool', kind, title: title || name || 'tool' };
+}
+
+function isEndTurnInput(input: Record<string, unknown>): boolean {
+  return typeof input.summary === 'string' || typeof input.headline === 'string' || typeof input.needs === 'string';
+}
+
 // Threadbear's own tools arrive under their bare name. The runner only
 // treats end_turn as the turn's close when it is `mcp__threadbear__end_turn`.
 export function protocolToolName(name: string, threadbear: Set<string>): string {
-  const bare = name.replace(/^mcp__threadbear__/, '');
-  if (!bare) return name;
+  const bare = name
+    .replace(/^mcp__threadbear__/, '')
+    .replace(/^threadbear__/, '')
+    .replace(/^threadbear[/_]/, '');
+  if (!bare || bare === name && !threadbear.has(bare) && bare !== 'end_turn') return name;
   if (threadbear.has(bare) || bare === 'end_turn') return `mcp__threadbear__${bare}`;
   return name;
 }
@@ -333,6 +381,20 @@ function outputText(raw: unknown): string {
 
 function numberOf(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+
+// Token fields the prompt result might carry. This CLI's processPrompt
+// returns only stopReason; these are read when a build does send them.
+export function usageFrom(body: Any | undefined): { usage?: Record<string, number>; costUsd?: number } {
+  if (!body) return {};
+  const bag = (body.usage && typeof body.usage === 'object' ? body.usage : body._meta && typeof body._meta === 'object' && (body._meta as Any).usage) as Any | undefined;
+  const src = bag && typeof bag === 'object' ? bag : body;
+  const input = numberOf(src.inputTokens) ?? numberOf(src.input_tokens);
+  const output = numberOf(src.outputTokens) ?? numberOf(src.output_tokens);
+  const cached = numberOf(src.cachedInputTokens) ?? numberOf(src.cache_read_input_tokens);
+  const usage = input !== undefined || output !== undefined ? { ...(input !== undefined ? { inputTokens: input } : {}), ...(output !== undefined ? { outputTokens: output } : {}), ...(cached !== undefined ? { cachedInputTokens: cached } : {}) } : undefined;
+  const cost = numberOf(src.total_cost_usd) ?? numberOf(body.totalCostUsd);
+  return { ...(usage ? { usage } : {}), ...(cost !== undefined ? { costUsd: cost } : {}) };
 }
 
 // Kept so a model effort, when ACP has nowhere to put it, is named in one

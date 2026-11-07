@@ -789,8 +789,10 @@ export class Runner {
       const adapter = this.adapters[account.provider];
       if (!adapter?.models) continue;
       try {
-        const models = await adapter.models(account);
-        this.learnAccount(account.id, { models });
+        const listed = await adapter.models(account);
+        const models = Array.isArray(listed) ? listed : listed.models;
+        const defaultModel = Array.isArray(listed) ? undefined : listed.defaultModel;
+        if (models.length) this.learnAccount(account.id, { models, ...(defaultModel ? { defaultModel } : {}) });
       } catch (e) {
         this.log.warn('could not read the model list', { accountId: account.id, error: String(e) });
       }
@@ -1151,7 +1153,7 @@ export class Runner {
   // Sent to each client after its hello.
   noticesForNewClient(): { level: 'info' | 'warning' | 'error'; message: string }[] {
     const out = this.clock.now() - this.startedAt < STARTUP_NOTICE_MS ? [...this.startupNotices] : [];
-    if (!fs.existsSync(this.cfg.claudePath)) {
+    if (!fs.existsSync(this.cfg.claudePath) && missingCliBanner('claude', this.safeAccounts())) {
       out.push({ level: 'error', message: `The claude CLI isn't at ${this.cfg.claudePath}, so Claude threads can't start. Install Claude Code, or set claudePath in runner.json.` });
     }
     return out;
@@ -1898,11 +1900,12 @@ export class Runner {
         // its own fresh start.
         rt.retriedFresh = false;
         if (rec.status === 'starting') rec.status = rt.approvals.size ? 'waiting' : 'running';
+        if (o.models?.length) this.learnAccount(rec.accountId, { models: o.models, ...(o.model && !rec.model ? { defaultModel: o.model } : {}) });
         if (o.model) {
           rec.modelInUse = o.model;
           // A thread with no model of its own shows what the account's
           // default really is, which the settings alone can only guess.
-          if (!rec.model) this.learnAccount(rec.accountId, { defaultModel: o.model });
+          if (!rec.model && !o.models?.length) this.learnAccount(rec.accountId, { defaultModel: o.model });
         }
         this.markDirty(st);
         break;
@@ -3417,6 +3420,18 @@ export function askedLine(m: { text: string; origin?: MessageOrigin; reviewId?: 
 export function oneLine(text: string, max: number): string {
   const s = text.replace(/\s+/g, ' ').trim();
   return s.length > max ? s.slice(0, max - 1).trimEnd() + '…' : s;
+}
+
+// A missing CLI is a banner when a login of that provider is here, or when
+// nothing is set up yet (the Claude line a first install already showed).
+// A Mac whose only login is Cursor does not get told to install Claude or
+// Codex.
+export function missingCliBanner(provider: Provider, accounts: Pick<Account, 'provider'>[]): boolean {
+  const has = (p: Provider) => accounts.some((a) => a.provider === p);
+  if (has(provider)) return true;
+  const other = (['claude', 'codex', 'cursor'] as const).some((p) => p !== provider && has(p));
+  if (other) return false;
+  return provider === 'claude';
 }
 
 // A provider's name in notes.

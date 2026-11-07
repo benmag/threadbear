@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import type { ToolDefinition } from '../codex/tools.ts';
 
-export type McpEndpoint = { url: string; name: string; type: 'sse'; headers: [] };
+export type McpEndpoint = { url: string; name: string; type: 'http' | 'sse'; headers: [] };
 
 export class ThreadbearMcp {
   readonly endpoint: McpEndpoint;
@@ -75,7 +75,10 @@ export class ThreadbearMcp {
     server.headersTimeout = 0;
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
     const port = (server.address() as { port: number }).port;
-    const endpoint: McpEndpoint = { type: 'sse', name: 'threadbear', url: `http://127.0.0.1:${port}/sse/${token}`, headers: [] };
+    // This CLI turns both ACP transports into `{ url, headers }` and POSTs
+    // JSON-RPC there. The SSE-only URL answered GET and the tools never
+    // connected. /mcp/<token> is that POST.
+    const endpoint: McpEndpoint = { type: 'http', name: 'threadbear', url: `http://127.0.0.1:${port}/mcp/${token}`, headers: [] };
     return new ThreadbearMcp(server, endpoint, () => sse?.end());
   }
 

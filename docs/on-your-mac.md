@@ -90,7 +90,9 @@ File references are where to look.
 - **The runner** listens on `127.0.0.1:8797` only, and needs a token
   (`runner/src/config.ts`). It starts the official `claude`, `codex` and
   `agent` (`cursor-agent`) CLIs for your threads. Cursor runs as
-  `agent acp` in the thread's folder.
+  `agent acp` in the thread's folder. Titles and the librarian, when they
+  run on a Cursor login, start `agent -p --mode ask` in an empty folder
+  under the data dir (`models/cli`) and send the thread text in the prompt.
 - **Agents get full access by default.** Claude runs with
   `bypassPermissions` and Codex with `danger-full-access`. Cursor's
   `session/request_permission` is answered allow-once without a card in
@@ -144,7 +146,8 @@ File references are where to look.
   stops this.
 - **Small model calls** (`runner/src/models/`): thread titles, filing
   threads into projects (the librarian, every 5 minutes) and similar jobs
-  send short excerpts of your threads to `claude -p` on your own logins.
+  send short excerpts of your threads to `claude -p` on a Claude login, or
+  to `agent -p --mode ask` on a Cursor login when that is the pool in use.
   When a project's notes pass 12,000 characters, the librarian sends them
   the same way to be rewritten shorter, and keeps the old notes in the
   data folder's `project-notes/` (the last 5 for each project).

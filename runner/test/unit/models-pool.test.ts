@@ -19,7 +19,7 @@ import { ledgerPath } from '../../src/models/ledger.ts';
 import { SettingsService, settingsMethods } from '../../src/settings.ts';
 import type { Account, Pool } from '../../src/protocol.ts';
 
-function acct(id: string, opts: { provider?: 'claude' | 'codex'; room?: number; blocked?: boolean } = {}): Account {
+function acct(id: string, opts: { provider?: 'claude' | 'codex' | 'cursor'; room?: number; blocked?: boolean } = {}): Account {
   const a: Account = { id, provider: opts.provider ?? 'claude', title: id, configDir: `/tmp/no-such/${id}` };
   if (opts.room !== undefined || opts.blocked) {
     a.usage = {
@@ -34,7 +34,7 @@ function acct(id: string, opts: { provider?: 'claude' | 'codex'; room?: number; 
 
 type Reply = CliResponse | ((req: CliRequest) => CliResponse | Promise<CliResponse>);
 
-function setup(o: { accounts?: Account[]; pools?: Pool[]; pool?: string | null; replies?: Reply[] } = {}) {
+function setup(o: { accounts?: Account[]; pools?: Pool[]; pool?: string | null; replies?: Reply[]; cursorBin?: () => string | undefined } = {}) {
   const home = tmpDir();
   ensureHome(home);
   let accounts = o.accounts ?? [acct('claude-main', { room: 50 }), acct('claude-1', { room: 80 }), acct('claude-2', { room: 90 }), acct('codex-main', { provider: 'codex', room: 90 })];
@@ -53,6 +53,7 @@ function setup(o: { accounts?: Account[]; pools?: Pool[]; pool?: string | null; 
     log: nullLogger,
     settings: () => settings,
     claudePath: '/fake/claude',
+    ...(o.cursorBin ? { cursorBin: o.cursorBin } : {}),
     poolHost: {
       pool: (id) => {
         const pool = pools.find((p) => p.id === id);
@@ -144,7 +145,7 @@ test('pool: a login that fails some other way says so, and is not counted as run
 test('pool: null, a pool that is gone or one with no Claude login says no-pool, and unavailable() says so', async () => {
   for (const pool of [null, 'nope', 'codex-only']) {
     const s = setup({ pool, pools: [{ id: 'claude', title: 'Claude', accountIds: ['claude-main'] }, { id: 'codex-only', title: 'Codex', accountIds: ['codex-main'] }] });
-    assert.equal(s.models.unavailable(), 'Needs a Claude pool to run on', String(pool));
+    assert.equal(s.models.unavailable(), 'Needs a Claude or Cursor pool to run on', String(pool));
     const r = await s.models.generate({ feature: 'titles', prompt: 'a' });
     assert.equal(r.ok ? 'sent' : r.reason, 'no-pool', String(pool));
     assert.equal(s.cli.length, 0);
@@ -274,6 +275,50 @@ process.stdin.on('end', () => {
   );
   return file;
 }
+
+test('pool: a Cursor-only Mac runs small jobs on the Cursor pool and a fast model', async () => {
+  const dir = tmpDir();
+  const bin = path.join(dir, 'agent');
+  fs.writeFileSync(
+    bin,
+    `#!/bin/sh
+model=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--model" ]; then model="$arg"; fi
+  prev="$arg"
+done
+printf "%s" "$model" > "$PWD/saw-model"
+printf "%s" "$*" > "$PWD/saw-args"
+echo "Filed it"
+`,
+    { mode: 0o755 },
+  );
+  const cursor = acct('cursor-main', { provider: 'cursor' });
+  cursor.models = [
+    { id: 'gpt-5.3-codex', model: 'gpt-5.3-codex', title: 'Codex 5.3' },
+    { id: 'composer-2.5-fast', model: 'composer-2.5-fast', title: 'Composer Fast' },
+    { id: 'auto', model: 'auto', title: 'Auto' },
+  ];
+  const s = setup({
+    accounts: [cursor],
+    pools: [
+      { id: 'claude', title: 'Claude', accountIds: [] },
+      { id: 'cursor', title: 'Cursor', accountIds: ['cursor-main'] },
+    ],
+    pool: 'claude',
+    cursorBin: () => bin,
+  });
+  assert.equal(s.models.unavailable(), undefined);
+  const r = await s.models.generate({ feature: 'titles', prompt: 'Name this thread' });
+  assert.ok(r.ok, !r.ok ? r.message : '');
+  assert.equal(r.value, 'Filed it');
+  assert.match(r.model, /^composer-2\.5-fast on cursor-main$/);
+  assert.equal(fs.readFileSync(path.join(s.home, 'models', 'cli', 'saw-model'), 'utf8'), 'composer-2.5-fast');
+  const args = fs.readFileSync(path.join(s.home, 'models', 'cli', 'saw-args'), 'utf8');
+  assert.match(args, /--mode ask/);
+  assert.match(args, /--trust/);
+});
 
 test('cli: askCli sends the prompt on stdin, runs in the empty folder on the login\'s config dir, and times out', async () => {
   const dir = tmpDir();

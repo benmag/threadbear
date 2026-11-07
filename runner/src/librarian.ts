@@ -1226,7 +1226,7 @@ const PROJECT_MARKERS = ['.git', 'package.json', 'Package.swift', 'pyproject.tom
 const WAIT_FOR: ModelFailure[] = ['no-pool', 'off', 'no-room'];
 
 function offReason(reason: ModelFailure, message: string): string {
-  if (reason === 'no-pool') return 'Needs a Claude pool to run on';
+  if (reason === 'no-pool') return 'Needs a Claude or Cursor pool to run on';
   // "Every login in Claude is out of room"
   if (reason === 'no-room') return message.replace(/\.$/, '');
   if (reason === 'off') return 'Model calls are off';

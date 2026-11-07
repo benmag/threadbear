@@ -58,7 +58,7 @@ test('tool calls, the end_turn name, a diff and a plan', () => {
   assert.deepEqual(calls.map((c) => [c.itemId, c.name, c.kind]), [
     ['t1', 'read', 'read'],
     ['t2', 'edit', 'edit'],
-    ['e1', 'mcp__threadbear__end_turn', 'other'],
+    ['e1', 'mcp__threadbear__end_turn', 'mcp'],
   ]);
   const results = events(outs).filter((e) => e.type === 'tool.result') as { itemId: string; ok: boolean; text: string }[];
   assert.equal(results.find((r) => r.itemId === 't1')?.text, '# Hi');

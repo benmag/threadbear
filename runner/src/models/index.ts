@@ -1,9 +1,10 @@
 // The runner's own small-model calls (docs/protocol.md, "Settings and
-// models"): classify, extract, summarize and generate, on one of the Claude
-// logins in a pool, through the official CLI. Features ask for a job, not
-// a model; ROUTES says which model answers it. A call never throws: a
-// failed one says why, and the feature falls back to what it did before
-// there was a model to ask.
+// models"): classify, extract, summarize and generate, on a Claude or
+// Cursor login in a pool, through that login's CLI. Features ask for a
+// job, not a model; ROUTES says which Claude model answers it. A Cursor
+// login uses a fast model from its list (or models.cursorModel). A call
+// never throws: a failed one says why, and the feature falls back to what
+// it did before there was a model to ask.
 //
 // There used to be OpenRouter too, with a key, a daily budget and a spend
 // to show. Mike dropped it (29 Oct 2026): every feature is Haiku or Opus,
@@ -17,6 +18,7 @@ import { expandHome } from '../config.ts';
 import { pickInPool } from '../pools.ts';
 import { askCli, cliDir } from './claude-pool.ts';
 import type { AskCli, CliResponse } from './claude-pool.ts';
+import { askCursor, pickCursorSmallModel } from './cursor-pool.ts';
 import { Ledger } from './ledger.ts';
 import { outermostBraces } from '../linear-text.ts';
 import type { UsageLine } from './ledger.ts';
@@ -59,8 +61,10 @@ export type SummarizeParams = Common & { text: string; maxWords?: number };
 // strong: Opus (ROUTES.decide) rather than Haiku.
 export type GenerateParams = Common & { prompt: string; system?: string; maxTokens?: number; strong?: boolean };
 
-// pool: the pool whose Claude logins answer; null for none (no small jobs).
-export type ModelSettings = { privateFolders: string[]; pool?: string | null };
+// pool: the pool whose logins answer; null for none (no small jobs).
+// cursorModel: which Cursor model, when a Cursor login answers. Unset
+// picks a fast one from that login's model list.
+export type ModelSettings = { privateFolders: string[]; pool?: string | null; cursorModel?: string };
 
 // What the Models layer needs of the runner.
 export type PoolHost = {
@@ -80,6 +84,8 @@ export type ModelsOptions = {
   // no-pool or off.
   poolHost?: PoolHost;
   claudePath?: string;
+  // The Cursor CLI, for a pool whose login is Cursor.
+  cursorBin?: () => string | undefined;
   registry?: { add(pid: number, command: string): void; remove(pid: number): void };
   // Stands in for the CLI in tests.
   askCli?: AskCli;
@@ -136,16 +142,26 @@ export class Models {
   // Why no call could go out at all, or undefined when one might: there's
   // a pool with a Claude login. Room isn't checked; a call finds that out.
   unavailable(): string | undefined {
-    return this.poolLogins() ? undefined : 'Needs a Claude pool to run on';
+    return this.poolLogins() ? undefined : 'Needs a Claude or Cursor pool to run on';
+  }
+
+  private usable(found: { pool: Pool; accounts: Account[] } | undefined): { pool: Pool; accounts: Account[] } | undefined {
+    if (!found) return undefined;
+    const accounts = found.accounts.filter((a) => (a.provider === 'claude' || a.provider === 'cursor') && found.pool.accountIds.includes(a.id));
+    return accounts.length ? { pool: found.pool, accounts } : undefined;
   }
 
   private poolLogins(): { pool: Pool; accounts: Account[] } | undefined {
     const id = this.poolId();
     if (id === null || !this.opts.poolHost) return undefined;
-    const found = this.opts.poolHost.pool(id);
-    if (!found) return undefined;
-    const accounts = found.accounts.filter((a) => a.provider === 'claude' && found.pool.accountIds.includes(a.id));
-    return accounts.length ? { pool: found.pool, accounts } : undefined;
+    const direct = this.usable(this.opts.poolHost.pool(id));
+    if (direct) return direct;
+    // The default pool is "claude". With no Claude login and a Cursor one,
+    // small jobs run there instead of sitting on "Needs a Claude pool".
+    if (id !== 'claude') return undefined;
+    const claude = this.opts.poolHost.pool('claude');
+    if (claude?.accounts.some((a) => a.provider === 'claude')) return undefined;
+    return this.usable(this.opts.poolHost.pool('cursor'));
   }
 
   // Picks one of `labels` for the text.
@@ -227,9 +243,8 @@ export class Models {
   private async viaPool<T>(job: ModelJob, p: Common, model: string, a: Attempt<T>): Promise<ModelResult<T> | { ok: false; skipped: Failure }> {
     if (!this.poolLogins()) {
       const id = this.poolId();
-      return skip('no-pool', id === null ? 'Small jobs are on no pool.' : `No pool called ${id} has a Claude login.`);
+      return skip('no-pool', id === null ? 'Small jobs are on no pool.' : `No pool called ${id} has a Claude or Cursor login.`);
     }
-    if (!this.opts.claudePath) return skip('off', 'Pool calls are off in this runner.');
     await this.acquirePool();
     try {
       const tried: string[] = [];
@@ -237,30 +252,50 @@ export class Models {
       for (;;) {
         // Read again each time round: the last call may have used up a login.
         const found = this.poolLogins();
-        if (!found) return skip('no-pool', 'The pool has no Claude login.');
+        if (!found) return skip('no-pool', 'The pool has no Claude or Cursor login.');
         title = found.pool.title;
-        const id = pickInPool(found.pool, found.accounts, { provider: 'claude', current: this.lastLogin, exclude: tried });
+        const provider = smallJobProvider(found.accounts, tried, this.lastLogin);
+        const id = pickInPool(found.pool, found.accounts, { provider, current: this.lastLogin, exclude: tried });
         const account = id ? found.accounts.find((x) => x.id === id) : undefined;
         if (!account) break;
         tried.push(account.id);
         const started = this.opts.clock.now();
-        const res: CliResponse = await (this.opts.askCli ?? askCli)({
-          claudePath: this.opts.claudePath,
-          account,
-          model,
-          system: a.system,
-          user: a.user,
-          jsonSchema: a.jsonSchema?.schema,
-          cwd: cliDir(this.opts.home),
-          timeoutMs: this.opts.poolTimeoutMs ?? POOL_TIMEOUT_MS,
-          registry: this.opts.registry,
-        });
+        const useModel = account.provider === 'cursor' ? pickCursorSmallModel(account.models ?? [], this.opts.settings().cursorModel) : model;
+        let res: CliResponse;
+        if (account.provider === 'cursor') {
+          const bin = this.opts.cursorBin?.();
+          if (!bin) return { ok: false, reason: 'off', message: 'The Cursor CLI is not installed, so small jobs cannot run.' };
+          res = await askCursor({
+            bin,
+            model: useModel,
+            system: a.system,
+            user: a.user,
+            jsonSchema: a.jsonSchema?.schema,
+            cwd: cliDir(this.opts.home),
+            timeoutMs: this.opts.poolTimeoutMs ?? POOL_TIMEOUT_MS,
+            registry: this.opts.registry,
+          });
+        } else if (!this.opts.claudePath) {
+          return skip('off', 'Pool calls are off in this runner.');
+        } else {
+          res = await (this.opts.askCli ?? askCli)({
+            claudePath: this.opts.claudePath,
+            account,
+            model: useModel,
+            system: a.system,
+            user: a.user,
+            jsonSchema: a.jsonSchema?.schema,
+            cwd: cliDir(this.opts.home),
+            timeoutMs: this.opts.poolTimeoutMs ?? POOL_TIMEOUT_MS,
+            registry: this.opts.registry,
+          });
+        }
         const value = res.ok ? a.read(res.text) : undefined;
         const unreadable = res.ok && value === undefined ? 'unreadable answer' : undefined;
         this.record({
           job,
           feature: p.feature,
-          model,
+          model: useModel,
           started,
           ok: res.ok && !unreadable,
           accountId: account.id,
@@ -269,7 +304,7 @@ export class Models {
         });
         if (res.ok && value !== undefined) {
           this.lastLogin = account.id;
-          return { ok: true, value, model: `${model} on ${account.id}`, ...tokensOf(res), ...(res.notionalUsd !== undefined ? { notionalUsd: res.notionalUsd } : {}) };
+          return { ok: true, value, model: `${useModel} on ${account.id}`, ...tokensOf(res), ...(res.notionalUsd !== undefined ? { notionalUsd: res.notionalUsd } : {}) };
         }
         if (!res.ok && res.limit) {
           this.opts.poolHost?.ranDry(account.id);
@@ -313,6 +348,15 @@ export class Models {
     else this.poolInFlight--;
   }
 
+}
+
+// Stay on the provider the last call used, while that login can still
+// answer. Otherwise Claude, then Cursor.
+function smallJobProvider(accounts: Account[], tried: string[], last?: string): 'claude' | 'cursor' {
+  const left = accounts.filter((a) => !tried.includes(a.id));
+  const current = left.find((a) => a.id === last);
+  if (current?.provider === 'claude' || current?.provider === 'cursor') return current.provider;
+  return left.some((a) => a.provider === 'claude') ? 'claude' : 'cursor';
 }
 
 function skip(reason: ModelFailure, message: string): { ok: false; skipped: Failure } {
