@@ -88,10 +88,10 @@ upgrade with an `Authorization` header that's wrong is turned away with HTTP
 ## Types
 
 ```ts
-type Provider = "claude" | "codex" | "cursor"
+type Provider = "claude" | "codex" | "cursor" | "opencode"
 
 type Account = {
-  id: string            // "claude-main", "claude-1", "codex-main", "cursor-main", ...
+  id: string            // "claude-main", "claude-1", "codex-main", "cursor-main", "opencode-main", ...
   provider: Provider
   title: string         // Claude: the email when known, else the id. Codex:
                         // "Codex · <email>", Cursor: "Cursor · <email>", so an

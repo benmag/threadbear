@@ -88,11 +88,12 @@ File references are where to look.
   lock from before rebasing until the check and fast-forward finish.
   Another landing waits; exiting, including a crash, releases the lock.
 - **The runner** listens on `127.0.0.1:8797` only, and needs a token
-  (`runner/src/config.ts`). It starts the official `claude`, `codex` and
-  `agent` (`cursor-agent`) CLIs for your threads. Cursor runs as
-  `agent acp` in the thread's folder. Titles and the librarian, when they
-  run on a Cursor login, start `agent -p --mode ask` in an empty folder
-  under the data dir (`models/cli`) and send the thread text in the prompt.
+  (`runner/src/config.ts`). It starts the official `claude`, `codex`,
+  `agent` (`cursor-agent`) and `opencode` CLIs for your threads. Cursor and
+  OpenCode both run as `acp` in the thread's folder (`agent acp` and
+  `opencode acp`). Titles and the librarian, when they run on a Cursor or
+  OpenCode login, use that CLI's one-shot ask mode in an empty folder under
+  the data dir (`models/cli`).
 - **Agents get full access by default.** Claude runs with
   `bypassPermissions` and Codex with `danger-full-access`. Cursor's
   `session/request_permission` is answered allow-once without a card in

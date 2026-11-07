@@ -16,10 +16,12 @@ Run these and fix what's missing before going on:
   (`nvm install 24 && nvm use 24`) or Homebrew (`brew install node@24`), and
   use that `node` for the rest.
 - Claude Code (`~/.local/bin/claude` or `claude` on the PATH), Codex
-  (`codex`), or the Cursor CLI (`~/.local/bin/cursor-agent`, `~/.local/bin/agent`,
-  or `cursor-agent` on the PATH): one of them installed and logged in.
-  Cursor's login is `agent login` (check with `agent status`). You're probably running in
-  one of them already.
+  (`codex`), the Cursor CLI (`~/.local/bin/cursor-agent`, `~/.local/bin/agent`,
+  or `cursor-agent` on the PATH), or OpenCode (`~/.opencode/bin/opencode` or
+  `opencode` on the PATH): one of them installed and logged in. Cursor's login
+  is `agent login` (check with `agent status`); OpenCode is `opencode auth login`
+  (free models work without extra credentials). You're probably running in one of
+  them already.
 - `launchctl print gui/$(id -u) >/dev/null && echo yes`: says `yes` when
   someone is logged in to the desktop. The runner only starts for a desktop
   login, so if it says nothing, **Ask** them to log in to the Mac's desktop.

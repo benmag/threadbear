@@ -463,7 +463,7 @@ test('the librarian waits without a pool, skips private folders, can be paused, 
   await tick(6);
   let st = librarian.status();
   assert.equal(st.state, 'off');
-  assert.equal(st.reason, 'Needs a Claude or Cursor pool to run on');
+  assert.equal(st.reason, 'Needs a Claude, Cursor or OpenCode pool to run on');
   assert.equal(st.queue.length, 1, 'kept for later');
   // Paused: nothing runs even when due.
   m['librarian.update']({ paused: true });

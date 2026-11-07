@@ -337,6 +337,7 @@ public enum CliText {
         case "claude": return "Claude Code"
         case "codex": return "Codex"
         case "cursor": return "Cursor"
+        case "opencode": return "OpenCode"
         default: return provider.prefix(1).uppercased() + provider.dropFirst()
         }
     }

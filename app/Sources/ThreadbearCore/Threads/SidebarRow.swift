@@ -155,7 +155,7 @@ public enum AccountName {
     /// Codex's "Codex · " prefix (older runners), else the id.
     public static func title(_ account: Account) -> String {
         if let email = account.email, !email.isEmpty { return email }
-        for prefix in ["Codex · ", "Cursor · "] {
+        for prefix in ["Codex · ", "Cursor · ", "OpenCode · "] {
             if account.title.hasPrefix(prefix) { return String(account.title.dropFirst(prefix.count)) }
         }
         return account.title.isEmpty ? account.id : account.title
@@ -202,6 +202,7 @@ public enum AccountName {
         switch provider {
         case "codex": return "Codex"
         case "cursor": return "Cursor"
+        case "opencode": return "OpenCode"
         default: return nil
         }
     }

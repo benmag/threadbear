@@ -20,6 +20,7 @@ import { PROVIDERS } from '../protocol.ts';
 import { claudeChannel, claudeInstalledVersion, claudeLatestVersion, runClaudeUpdate } from './claude.ts';
 import { CodexCopies, NPM_LATEST, codexPackageVersion, type CodexResolver, type SurfaceCheck } from './codex.ts';
 import { findCursorBinary, versionFromCursorPath } from '../adapters/cursor/cli.ts';
+import { findOpenCodeBinary, openCodeVersion } from '../adapters/opencode/cli.ts';
 import { VERSION_RE, compareVersions, defaultExec, defaultFetchText, type Exec, type FetchText } from './exec.ts';
 import { UpdateHistory, type ProviderState, type UpdatesFile } from './history.ts';
 
@@ -135,6 +136,10 @@ export class CliUpdates {
     return this.cfg.cursorPath ?? findCursorBinary({ pathEnv: this.env.PATH }) ?? path.join(os.homedir(), '.local', 'bin', 'cursor-agent');
   }
 
+  opencodeBinary(): string {
+    return this.cfg.opencodePath ?? findOpenCodeBinary({ pathEnv: this.env.PATH }) ?? path.join(os.homedir(), '.opencode', 'bin', 'opencode');
+  }
+
   // What the next Codex process should start: the binary set by hand, else
   // Threadbear's own `current`, else (before the first copy is installed,
   // or with updates off, as in tests and dev runners) the codex next to the
@@ -196,7 +201,9 @@ export class CliUpdates {
           ? `Claude Code ${version} failed to start twice. To go back: claude install ${this.lastClaude ?? '<version>'}`
           : p === 'codex'
             ? `Codex ${version} failed to start twice.${prev ? ` Go back to ${prev} in Usage.` : ''}`
-            : `Cursor ${version} failed to start twice.`;
+            : p === 'cursor'
+              ? `Cursor ${version} failed to start twice.`
+              : `OpenCode ${version} failed to start twice.`;
       this.d.notice?.('warning', message);
       this.history.append({ at: this.iso(), provider: p, action: 'notice', ok: false, version, message });
     }
@@ -211,7 +218,8 @@ export class CliUpdates {
     const latestVersion = s.latestVersion;
     const codexState = p === 'codex' && this.managedCodex() ? this.copies.state() : undefined;
     const hold = codexState?.hold;
-    const binary = p === 'claude' ? this.cfg.claudePath : p === 'codex' ? this.codexBinary() : this.cursorBinary();
+    const binary =
+      p === 'claude' ? this.cfg.claudePath : p === 'codex' ? this.codexBinary() : p === 'cursor' ? this.cursorBinary() : this.opencodeBinary();
     let status: CliStatus['status'];
     if (!installedVersion) status = fs.existsSync(binary) ? 'unknown' : 'missing';
     else if (hold && latestVersion === hold.version && compareVersions(installedVersion, hold.version) < 0) status = 'held';
@@ -261,8 +269,14 @@ export class CliUpdates {
     const codex = bin === this.copies.currentLink ? this.copies.currentVersion() : codexPackageVersion(bin);
     const cursorBin = this.cursorBinary();
     const cursor = fs.existsSync(cursorBin) ? await this.cursorInstalled(cursorBin) : undefined;
-    const changed = claude !== this.installed.claude || codex !== this.installed.codex || cursor !== this.installed.cursor;
-    this.installed = { claude, codex, cursor };
+    const opencodeBin = this.opencodeBinary();
+    const opencode = fs.existsSync(opencodeBin) ? await openCodeVersion(opencodeBin) : undefined;
+    const changed =
+      claude !== this.installed.claude ||
+      codex !== this.installed.codex ||
+      cursor !== this.installed.cursor ||
+      opencode !== this.installed.opencode;
+    this.installed = { claude, codex, cursor, opencode };
     if (claude) this.lastClaude ??= claude;
     if (changed) this.changed();
   }
@@ -297,6 +311,10 @@ export class CliUpdates {
     if (this.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC) return;
     if (p === 'cursor') {
       await this.checkCursor(asked);
+      return;
+    }
+    if (p === 'opencode') {
+      await this.checkOpenCode(asked);
       return;
     }
     try {
@@ -341,7 +359,9 @@ export class CliUpdates {
       return;
     }
     this.setUpdate(p, { state: 'running', targetVersion: target });
-    const promise = (p === 'claude' ? this.updateClaude(attempt) : p === 'codex' ? this.updateCodex(o) : this.updateCursor()).catch((e: Error) => {
+    const promise = (
+      p === 'claude' ? this.updateClaude(attempt) : p === 'codex' ? this.updateCodex(o) : p === 'cursor' ? this.updateCursor() : this.updateOpenCode()
+    ).catch((e: Error) => {
       this.d.log.error('cli updates: update failed', { provider: p, error: e.message });
       this.finish(p, { state: 'failed', targetVersion: target, message: e.message });
     });
@@ -379,6 +399,51 @@ export class CliUpdates {
     if (fromPath) return fromPath;
     const r = await this.exec(bin, ['--version'], { timeoutMs: 10_000 });
     return r.code === 0 ? (r.stdout + r.stderr).match(VERSION_RE)?.[0] : undefined;
+  }
+
+  private async checkOpenCode(asked: boolean): Promise<void> {
+    const s = this.ps('opencode');
+    s.checkedAt = this.iso();
+    const bin = this.opencodeBinary();
+    if (!fs.existsSync(bin)) {
+      this.save();
+      this.changed();
+      return;
+    }
+    const version = await openCodeVersion(bin);
+    if (version) s.latestVersion = version;
+    this.save();
+    this.changed();
+    if (!asked && this.policy('opencode') !== 'auto') return;
+    if (this.policy('opencode') === 'auto') this.startUpdate('opencode', {});
+  }
+
+  private async updateOpenCode(): Promise<void> {
+    const bin = this.opencodeBinary();
+    const target = this.st.opencode?.latestVersion;
+    if (!fs.existsSync(bin)) {
+      this.finish('opencode', { state: 'failed', targetVersion: target, message: `The OpenCode CLI isn't at ${bin}. Install it from https://opencode.ai/docs, then check again.` });
+      return;
+    }
+    const before = this.installed.opencode;
+    const r = await this.exec(bin, ['upgrade'], { timeoutMs: RUN_TIMEOUT_MS, env: this.env });
+    const after = (await openCodeVersion(bin)) ?? before;
+    if (after) this.installed.opencode = after;
+    if (r.code !== 0) {
+      const message = (r.stderr || r.stdout || r.error || 'upgrade failed').trim().slice(0, 500);
+      this.history.append({ at: this.iso(), provider: 'opencode', action: 'update', ok: false, message, output: r.stdout });
+      this.finish('opencode', { state: 'failed', targetVersion: target, message });
+      return;
+    }
+    if (after) this.ps('opencode').latestVersion = after;
+    if (before && after && before !== after) {
+      this.history.append({ at: this.iso(), provider: 'opencode', action: 'update', ok: true, version: after, message: `from ${before}`, output: r.stdout });
+      this.finish('opencode', { state: 'succeeded', targetVersion: after });
+      this.d.hooks.releaseIdle('opencode', after);
+    } else {
+      this.history.append({ at: this.iso(), provider: 'opencode', action: 'update', ok: true, version: after, message: 'unchanged', output: r.stdout });
+      this.finish('opencode', { state: 'unchanged', targetVersion: after });
+    }
   }
 
   private async updateCursor(): Promise<void> {

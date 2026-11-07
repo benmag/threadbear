@@ -89,6 +89,9 @@ export type DiscoveryConfig = Pick<Config, 'claudeMainDir' | 'claudeMainJson' | 
     // Set when `cursor-agent status` says this Mac is logged in. One login;
     // Cursor has no per-account config dir the way Claude and Codex do.
     cursorLogin?: { email?: string };
+    // Set when the OpenCode CLI is installed (`opencode auth list`). Free
+    // models work without credentials; email comes from auth when present.
+    opencodeLogin?: { email?: string };
   };
 
 // claude-main is ~/.claude (its .claude.json sits at ~/.claude.json);
@@ -127,6 +130,7 @@ export function discoverAccounts(cfg: DiscoveryConfig): Account[] {
     if (isCodexLogin(dir)) out.push(codexAccount(id, dir));
   }
   if (cfg.cursorLogin) out.push(cursorAccount(cfg.cursorLogin.email));
+  if (cfg.opencodeLogin) out.push(opencodeAccount(cfg.opencodeLogin.email));
   for (const a of out) {
     const note = cfg.accountNotes?.[a.id];
     if (note) a.note = note;
@@ -152,6 +156,21 @@ function cursorTitle(email: string | undefined): string {
   return `Cursor · ${email ?? 'cursor-main'}`;
 }
 
+function opencodeAccount(email: string | undefined): Account {
+  const account: Account = {
+    id: 'opencode-main',
+    provider: 'opencode',
+    title: opencodeTitle(email),
+    configDir: path.join(os.homedir(), '.config', 'opencode'),
+  };
+  if (email) account.email = email;
+  return account;
+}
+
+function opencodeTitle(email: string | undefined): string {
+  return `OpenCode · ${email ?? 'opencode-main'}`;
+}
+
 function codexAccount(id: string, configDir: string): Account {
   const account: Account = { id, provider: 'codex', title: codexTitle(undefined, id), configDir };
   const conf = readCodexConfig(path.join(configDir, 'config.toml'));
@@ -170,7 +189,7 @@ function codexTitle(email: string | undefined, id: string): string {
 // settings.json, Codex's config.toml.
 function settingsModel(account: Account): string | undefined {
   if (account.provider === 'codex') return readCodexConfig(path.join(account.configDir, 'config.toml')).model;
-  if (account.provider === 'cursor') return undefined;
+  if (account.provider === 'cursor' || account.provider === 'opencode') return undefined;
   return readSettingsModel(path.join(account.configDir, 'settings.json'));
 }
 
@@ -228,6 +247,15 @@ export class AccountRegistry {
     this.list();
   }
 
+  noteOpenCode(login: { email?: string } | null): void {
+    const next = login ?? undefined;
+    if (JSON.stringify(this.cfg.opencodeLogin ?? null) === JSON.stringify(next ?? null)) return;
+    if (next) this.cfg.opencodeLogin = next;
+    else delete this.cfg.opencodeLogin;
+    this.at = 0;
+    this.list();
+  }
+
   // Keeps what a probe or a turn showed about an account. Returns whether
   // anything changed, so the runner can tell its clients.
   learn(id: string, info: LearnedAccountInfo): boolean {
@@ -260,7 +288,14 @@ export class AccountRegistry {
     const id = this.usage.identityFor(account);
     if (id.email) out.email = id.email;
     if (id.plan) out.plan = id.plan;
-    out.title = out.provider === 'codex' ? codexTitle(out.email, out.id) : out.provider === 'cursor' ? cursorTitle(out.email) : (out.email ?? out.id);
+    out.title =
+      out.provider === 'codex'
+        ? codexTitle(out.email, out.id)
+        : out.provider === 'cursor'
+          ? cursorTitle(out.email)
+          : out.provider === 'opencode'
+            ? opencodeTitle(out.email)
+            : (out.email ?? out.id);
     const usage = this.usage.usageFor(out);
     if (usage) out.usage = usage;
     return out;

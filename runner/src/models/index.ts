@@ -19,6 +19,7 @@ import { pickInPool } from '../pools.ts';
 import { askCli, cliDir } from './claude-pool.ts';
 import type { AskCli, CliResponse } from './claude-pool.ts';
 import { askCursor, pickCursorSmallModel } from './cursor-pool.ts';
+import { askOpenCode, pickOpenCodeSmallModel } from './opencode-pool.ts';
 import { Ledger } from './ledger.ts';
 import { outermostBraces } from '../linear-text.ts';
 import type { UsageLine } from './ledger.ts';
@@ -64,7 +65,7 @@ export type GenerateParams = Common & { prompt: string; system?: string; maxToke
 // pool: the pool whose logins answer; null for none (no small jobs).
 // cursorModel: which Cursor model, when a Cursor login answers. Unset
 // picks a fast one from that login's model list.
-export type ModelSettings = { privateFolders: string[]; pool?: string | null; cursorModel?: string };
+export type ModelSettings = { privateFolders: string[]; pool?: string | null; cursorModel?: string; opencodeModel?: string };
 
 // What the Models layer needs of the runner.
 export type PoolHost = {
@@ -86,6 +87,7 @@ export type ModelsOptions = {
   claudePath?: string;
   // The Cursor CLI, for a pool whose login is Cursor.
   cursorBin?: () => string | undefined;
+  opencodeBin?: () => string | undefined;
   registry?: { add(pid: number, command: string): void; remove(pid: number): void };
   // Stands in for the CLI in tests.
   askCli?: AskCli;
@@ -142,12 +144,14 @@ export class Models {
   // Why no call could go out at all, or undefined when one might: there's
   // a pool with a Claude login. Room isn't checked; a call finds that out.
   unavailable(): string | undefined {
-    return this.poolLogins() ? undefined : 'Needs a Claude or Cursor pool to run on';
+    return this.poolLogins() ? undefined : 'Needs a Claude, Cursor or OpenCode pool to run on';
   }
 
   private usable(found: { pool: Pool; accounts: Account[] } | undefined): { pool: Pool; accounts: Account[] } | undefined {
     if (!found) return undefined;
-    const accounts = found.accounts.filter((a) => (a.provider === 'claude' || a.provider === 'cursor') && found.pool.accountIds.includes(a.id));
+    const accounts = found.accounts.filter(
+      (a) => (a.provider === 'claude' || a.provider === 'cursor' || a.provider === 'opencode') && found.pool.accountIds.includes(a.id),
+    );
     return accounts.length ? { pool: found.pool, accounts } : undefined;
   }
 
@@ -161,7 +165,9 @@ export class Models {
     if (id !== 'claude') return undefined;
     const claude = this.opts.poolHost.pool('claude');
     if (claude?.accounts.some((a) => a.provider === 'claude')) return undefined;
-    return this.usable(this.opts.poolHost.pool('cursor'));
+    const cursor = this.usable(this.opts.poolHost.pool('cursor'));
+    if (cursor) return cursor;
+    return this.usable(this.opts.poolHost.pool('opencode'));
   }
 
   // Picks one of `labels` for the text.
@@ -243,7 +249,7 @@ export class Models {
   private async viaPool<T>(job: ModelJob, p: Common, model: string, a: Attempt<T>): Promise<ModelResult<T> | { ok: false; skipped: Failure }> {
     if (!this.poolLogins()) {
       const id = this.poolId();
-      return skip('no-pool', id === null ? 'Small jobs are on no pool.' : `No pool called ${id} has a Claude or Cursor login.`);
+      return skip('no-pool', id === null ? 'Small jobs are on no pool.' : `No pool called ${id} has a Claude, Cursor or OpenCode login.`);
     }
     await this.acquirePool();
     try {
@@ -252,7 +258,7 @@ export class Models {
       for (;;) {
         // Read again each time round: the last call may have used up a login.
         const found = this.poolLogins();
-        if (!found) return skip('no-pool', 'The pool has no Claude or Cursor login.');
+        if (!found) return skip('no-pool', 'The pool has no Claude, Cursor or OpenCode login.');
         title = found.pool.title;
         const provider = smallJobProvider(found.accounts, tried, this.lastLogin);
         const id = pickInPool(found.pool, found.accounts, { provider, current: this.lastLogin, exclude: tried });
@@ -260,12 +266,31 @@ export class Models {
         if (!account) break;
         tried.push(account.id);
         const started = this.opts.clock.now();
-        const useModel = account.provider === 'cursor' ? pickCursorSmallModel(account.models ?? [], this.opts.settings().cursorModel) : model;
+        const settings = this.opts.settings();
+        const useModel =
+          account.provider === 'cursor'
+            ? pickCursorSmallModel(account.models ?? [], settings.cursorModel)
+            : account.provider === 'opencode'
+              ? pickOpenCodeSmallModel(account.models ?? [], settings.opencodeModel)
+              : model;
         let res: CliResponse;
         if (account.provider === 'cursor') {
           const bin = this.opts.cursorBin?.();
           if (!bin) return { ok: false, reason: 'off', message: 'The Cursor CLI is not installed, so small jobs cannot run.' };
           res = await askCursor({
+            bin,
+            model: useModel,
+            system: a.system,
+            user: a.user,
+            jsonSchema: a.jsonSchema?.schema,
+            cwd: cliDir(this.opts.home),
+            timeoutMs: this.opts.poolTimeoutMs ?? POOL_TIMEOUT_MS,
+            registry: this.opts.registry,
+          });
+        } else if (account.provider === 'opencode') {
+          const bin = this.opts.opencodeBin?.();
+          if (!bin) return { ok: false, reason: 'off', message: 'The OpenCode CLI is not installed, so small jobs cannot run.' };
+          res = await askOpenCode({
             bin,
             model: useModel,
             system: a.system,
@@ -352,11 +377,15 @@ export class Models {
 
 // Stay on the provider the last call used, while that login can still
 // answer. Otherwise Claude, then Cursor.
-function smallJobProvider(accounts: Account[], tried: string[], last?: string): 'claude' | 'cursor' {
+type SmallJobProvider = 'claude' | 'cursor' | 'opencode';
+
+function smallJobProvider(accounts: Account[], tried: string[], last?: string): SmallJobProvider {
   const left = accounts.filter((a) => !tried.includes(a.id));
   const current = left.find((a) => a.id === last);
-  if (current?.provider === 'claude' || current?.provider === 'cursor') return current.provider;
-  return left.some((a) => a.provider === 'claude') ? 'claude' : 'cursor';
+  if (current?.provider === 'claude' || current?.provider === 'cursor' || current?.provider === 'opencode') return current.provider;
+  if (left.some((a) => a.provider === 'claude')) return 'claude';
+  if (left.some((a) => a.provider === 'cursor')) return 'cursor';
+  return 'opencode';
 }
 
 function skip(reason: ModelFailure, message: string): { ok: false; skipped: Failure } {

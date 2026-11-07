@@ -1,7 +1,7 @@
 // The seam between the runner and a provider CLI. The runner owns threads,
 // turns, persistence and the protocol; an adapter only drives one CLI
 // process per live thread and reports normalised output. Claude, Codex and
-// Cursor are the implementations of AgentAdapter.
+// Cursor and OpenCode are the implementations of AgentAdapter.
 import type { SlashCommand } from '../slash-commands.ts';
 import type {
   Account,
