@@ -214,6 +214,7 @@ export const newThreadsPart = {
     this.store.create(rec);
     const st: ThreadState = { rec, rt: newRuntime(this.clock.now()) };
     this.threads.set(id, st);
+    this.noteShortlist();
     // What Mike picked last is what the next thread starts on, so a
     // schedule's own login or pool (a 9:00 standup's) doesn't move it.
     if (params.origin === 'schedule') {

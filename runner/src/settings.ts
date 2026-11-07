@@ -6,6 +6,7 @@ import type { Config } from './config.ts';
 import { expandHome, readRunnerJson, writeRunnerJson } from './config.ts';
 import type { Clock } from './clock.ts';
 import { ErrorCode, RpcError } from './protocol.ts';
+import { cleanIds, type Shortlists } from './model-shortlist.ts';
 import type { Notification } from './runner.ts';
 import type { Models } from './models/index.ts';
 import type { BringInSetting } from './bring-in.ts';
@@ -24,6 +25,8 @@ export type Settings = {
   models: {
     pool: string | null;
     privateFolders: string[];
+    // Pool id to the model ids its menu shows; a pool with no entry shows all.
+    shortlist?: Shortlists;
   };
 };
 
@@ -35,7 +38,9 @@ export type SettingsUpdate = {
   bulletReplies?: boolean;
   oneReply?: boolean;
   bringIn?: BringInSetting;
-  models?: { pool?: string | null; privateFolders?: string[] };
+  // shortlist: the pools given get that list (an empty one clears it); the
+  // rest are left as they are.
+  models?: { pool?: string | null; privateFolders?: string[]; shortlist?: Record<string, string[]> };
 };
 
 export class SettingsService {
@@ -43,10 +48,13 @@ export class SettingsService {
   private publish: (n: Notification) => void;
   // The pools there are, so models.pool can be checked; unchecked without.
   private poolIds?: () => string[];
+  // The model menu changed (a shortlist): the runner tells its clients.
+  private menuChanged?: () => void;
 
-  constructor(opts: { config: Config; publish: (n: Notification) => void; poolIds?: () => string[] }) {
+  constructor(opts: { config: Config; publish: (n: Notification) => void; poolIds?: () => string[]; menuChanged?: () => void }) {
     this.cfg = opts.config;
     this.poolIds = opts.poolIds;
+    this.menuChanged = opts.menuChanged;
     this.publish = opts.publish;
   }
 
@@ -63,6 +71,7 @@ export class SettingsService {
       models: {
         pool: this.cfg.models.pool,
         privateFolders: [...this.cfg.models.privateFolders],
+        ...(this.cfg.models.shortlist ? { shortlist: structuredClone(this.cfg.models.shortlist) } : {}),
       },
     };
   }
@@ -84,6 +93,12 @@ export class SettingsService {
     if (pool === '') throw bad('pool must be a pool id or null');
     const pools = pool ? this.poolIds?.() : undefined;
     if (pool && pools && !pools.includes(pool)) throw bad(`No pool called ${pool}. Pools: ${pools.join(', ') || 'none'}`);
+    const shortlist = u.models?.shortlist;
+    if (shortlist) {
+      const known = this.poolIds?.();
+      const unknown = known ? Object.keys(shortlist).filter((id) => !known.includes(id)) : [];
+      if (unknown.length) throw bad(`No pool called ${unknown.join(', ')}. Pools: ${known!.join(', ') || 'none'}`);
+    }
 
     const json = readRunnerJson(this.cfg.home);
     if (cwd !== undefined) {
@@ -104,12 +119,26 @@ export class SettingsService {
     if (u.oneReply !== undefined) json.oneReply = this.cfg.oneReply = u.oneReply;
     // Read each time it's needed (bring-in.ts), so this takes effect at once.
     if (u.bringIn !== undefined) json.releases = { ...json.releases, bringIn: u.bringIn };
-    if (folders !== undefined || pool !== undefined) {
+    if (folders !== undefined || pool !== undefined || shortlist) {
       json.models = { ...json.models };
       if (pool !== undefined) json.models.pool = this.cfg.models.pool = pool;
       if (folders !== undefined) json.models.privateFolders = this.cfg.models.privateFolders = [...new Set(folders)];
+      if (shortlist) {
+        const next: Shortlists = { ...this.cfg.models.shortlist };
+        for (const [id, ids] of Object.entries(shortlist)) {
+          const clean = cleanIds(ids)!;
+          if (clean.length) next[id] = clean;
+          else delete next[id];
+        }
+        if (Object.keys(next).length) json.models.shortlist = this.cfg.models.shortlist = next;
+        else {
+          delete json.models.shortlist;
+          delete this.cfg.models.shortlist;
+        }
+      }
     }
     writeRunnerJson(this.cfg.home, json);
+    if (shortlist) this.menuChanged?.();
     return this.changed();
   }
 
@@ -159,6 +188,13 @@ export function settingsMethods(s: SettingsService): Record<string, (p: Record<s
             throw bad('models.privateFolders must be an array of strings');
           }
           u.models.privateFolders = mm.privateFolders as string[];
+        }
+        if (mm.shortlist !== undefined) {
+          const sl = mm.shortlist;
+          if (!sl || typeof sl !== 'object' || Array.isArray(sl) || Object.values(sl).some((l) => !Array.isArray(l) || l.some((x) => typeof x !== 'string'))) {
+            throw bad('models.shortlist must map a pool id to a list of model ids');
+          }
+          u.models.shortlist = sl as Record<string, string[]>;
         }
       }
       return { settings: s.update(u) };

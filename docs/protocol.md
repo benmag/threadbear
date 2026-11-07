@@ -104,7 +104,9 @@ type Account = {
                         // sees. Absent until the runner knows
   models?: ModelChoice[] // what the account's CLI offers, in its own order,
                         // once the runner has asked it (a few seconds after
-                        // it starts). Codex: its model list without hidden models
+                        // it starts). Codex: its model list without hidden models.
+                        // Cut to a pool's shortlist when its pool has one
+                        // (Settings and models, "Shortlists")
   defaultEffort?: EffortLevel // the account's own level (Codex: config.toml's
                         // model_reasoning_effort). Absent: each model's own
   email?: string        // the bare address, when known
@@ -922,7 +924,7 @@ the summary and then the reply.
 | `pools.list` | `{}` | `{ pools: Pool[] }` (see Pools) |
 | `pools.save` | `{ pools: Pool[] }` | `{ pools: Pool[] }`. Replaces the whole list in `runner.json` (`builtIn` is dropped; an empty list goes back to the built-in ones). `-32602` for a duplicate id, a blank id or title, an empty `accountIds`, or an account id the runner doesn't know. A blank or non-string `icon` is dropped. Every client gets `pools.updated` |
 | `settings.get` | `{}` | `{ settings: Settings }` |
-| `settings.update` | `{ defaultCwd?, idleMinutes?, maxLiveCLIs?, followMain?, bulletReplies?, oneReply?, bringIn?, models?: { pool?: string \| null, privateFolders? } }` | `{ settings: Settings }`. Saves what's given to `runner.json` and applies it straight away, except `followMain` (next restart). `defaultCwd` must be an existing folder, `idleMinutes` at least 1, `maxLiveCLIs` 1 to 20, `pool` a pool id or `null`; otherwise `-32602` saying which. Every client gets `settings.updated` |
+| `settings.update` | `{ defaultCwd?, idleMinutes?, maxLiveCLIs?, followMain?, bulletReplies?, oneReply?, bringIn?, models?: { pool?: string \| null, privateFolders?, shortlist? } }` | `{ settings: Settings }`. Saves what's given to `runner.json` and applies it straight away, except `followMain` (next restart). `defaultCwd` must be an existing folder, `idleMinutes` at least 1, `maxLiveCLIs` 1 to 20, `pool` a pool id or `null`; otherwise `-32602` saying which. Every client gets `settings.updated` |
 | `devices.list` | `{}` | `{ devices: Device[], site?: string, reason?: string }` (see Devices). `site` is the website's root while sync is on; `reason` says why nothing can pair when it's off |
 | `devices.pair` | `{ kind: "phone" \| "browser", name?: string, days?: number }` | `{ device: Device, pairingLink?: string, signInLink?: string }`. Issues a phone token for a new phone or browser (see Devices) and returns the link that carries it: a `threadbear://pair?url=…&token=…&key=<runnerId>:<key>` link for a phone, for the app to draw as a QR code (the `key` item is this runner's secret-box public key, see Secrets, "Trusting the key"; absent when the runner has none), or the website's sign-in link (`<site>/#token=…`) for a browser, for the app to open. `days` is 1 to 365 (default 90). `-32000` while sync is off, or while the backend is older than this |
 | `devices.revoke` | `{ deviceId }` | `{ devices: Device[] }`. The phone or browser is signed out at its next request. `-32602` for an id that isn't there |
@@ -1455,6 +1457,23 @@ older runner's `openRouterKey`, `dailyBudgetUsd`, `spentTodayUsd` and
   after 60 seconds; Cursor and OpenCode after 180 (cold `agent` / OpenCode
   startup can be slow). `models.poolTimeoutMs` in `runner.json` overrides
   all of those.
+- **Shortlists.** `models.shortlist` in `runner.json` maps a pool id to the
+  model ids that pool's menu shows, in that order. `settings.update`
+  takes `models: { shortlist: { <poolId>: string[] } }`: each pool named
+  gets that list (blanks and repeats dropped; an empty list clears it), the
+  rest are left alone, an unknown pool id is `-32602`, and
+  `Settings.models.shortlist` reports what is set (absent when nothing is).
+  Only the account list sent to clients (`hello`, `accounts.updated`, and
+  so the phone's mirror) is cut: `Account.models` for a login in a
+  shortlisted pool is the shortlisted ids the CLI offers, in list order,
+  then the login's `defaultModel`, the runner's default for its provider
+  and every model a thread on that login uses, if they weren't named. A
+  login in several shortlisted pools gets the pools' lists joined in pool
+  order; a pool with no list adds nothing and takes nothing away. An id
+  the CLI doesn't offer (to any login in the pool) is skipped with one
+  debug line, and a list that matches none of a login's models leaves its
+  menu whole. The stored list is not cut, so small jobs and the librarian
+  choose from every model. Nothing is shortlisted unless set.
 - **Private folders.** `models.privateFolders` in `runner.json` lists
   folders whose threads are never sent anywhere, for client work and the
   like. A call for a thread in one of them, or anywhere under one,

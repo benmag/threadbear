@@ -126,6 +126,7 @@ const HELP = `tb: talk to the Threadbear runner
   tb settings [--json]            what the Settings window shows
   tb models [--json]              the small-model pool and private folders
   tb models pool <pool|off>       which pool's Claude logins answer small jobs (off: none, so no titles or librarian)
+  tb models shortlist [pool [id...|all]]  which models a pool's menu shows, in order (all: every model)
   tb models try <job> "text" [--labels a,b] [--field name=description]... [--system S] [--cwd DIR]
                                   one call by hand: classify (--labels), extract (--field),
                                   summarize or generate. It spends like any other
@@ -737,6 +738,7 @@ function printModels(s: Settings): void {
   const m = s.models;
   console.log(`Small jobs on    ${m.pool === null ? 'nothing: titles and the librarian are off' : `the ${m.pool} pool`}`);
   console.log(`Private folders  ${m.privateFolders.length ? m.privateFolders.join(', ') : 'none'}`);
+  for (const [pool, ids] of Object.entries(m.shortlist ?? {})) console.log(`Shortlist ${pool.padEnd(8)} ${ids.join(', ')}`);
 }
 
 async function modelsCommand(client: RunnerClient, args: string[], f: Flags): Promise<number> {
@@ -752,6 +754,22 @@ async function modelsCommand(client: RunnerClient, args: string[], f: Flags): Pr
     if (!id || rest.length > 1) throw new Error('tb models pool <pool|off>. tb pools lists them.');
     const r = await client.call<{ settings: Settings }>('settings.update', { models: { pool: id === 'off' ? null : id } });
     printModels(r.settings);
+    return 0;
+  }
+  if (action === 'shortlist') {
+    const [pool, ...ids] = rest;
+    if (pool && !ids.length) throw new Error('tb models shortlist <pool> <model id>... (or "all" to show every model)');
+    if (pool) {
+      const list = ids.length === 1 && ids[0] === 'all' ? [] : ids;
+      const r = await client.call<{ settings: Settings }>('settings.update', { models: { shortlist: { [pool]: list } } });
+      printModels(r.settings);
+      return 0;
+    }
+    const r = await client.call<{ settings: Settings }>('settings.get', {});
+    const lists = r.settings.models.shortlist ?? {};
+    if (f.json) console.log(JSON.stringify(lists, null, 2));
+    else if (!Object.keys(lists).length) console.log('No pool has a shortlist: every menu shows every model.');
+    else printModels(r.settings);
     return 0;
   }
   if (action === 'try') {
@@ -779,7 +797,7 @@ async function modelsCommand(client: RunnerClient, args: string[], f: Flags): Pr
     }
     return r.ok ? 0 : 1;
   }
-  throw new Error(`Unknown: tb models ${action}. It's pool or try.`);
+  throw new Error(`Unknown: tb models ${action}. It's pool, shortlist or try.`);
 }
 
 // Inside a thread, tb won't stop the thread it runs in, as the threadbear

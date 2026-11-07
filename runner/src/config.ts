@@ -8,6 +8,7 @@ import { RELEASE } from './release.ts';
 import { findGateway, gatewayBase } from './connectors.ts';
 import { findGatewayClient } from './notion-tasks.ts';
 import { CLI_POLICIES, isEffortLevel, isProvider, type CliPolicy, type EffortLevel, type Provider } from './protocol.ts';
+import { parseShortlists, type Shortlists } from './model-shortlist.ts';
 
 // <package version>+<release id>, or +source when run from a checkout.
 export const RUNNER_VERSION = RELEASE.version;
@@ -114,8 +115,9 @@ export type Config = {
   releases?: { publish: boolean; signingKey?: string };
   // The runner's own model calls (src/models/): the pool whose Claude
   // logins answer them (null: none, so no small jobs) and folders whose
-  // threads are never sent.
-  models: { pool: string | null; privateFolders: string[]; cursorModel?: string; opencodeModel?: string; poolTimeoutMs?: number };
+  // threads are never sent. `shortlist` is only the model menu, per pool id
+  // (model-shortlist.ts); those calls still see the CLI's full list.
+  models: { pool: string | null; privateFolders: string[]; cursorModel?: string; opencodeModel?: string; poolTimeoutMs?: number; shortlist?: Shortlists };
   // The Convex mirror (src/sync.ts): the project's URL, whether it's on,
   // the name the phone shows for this runner and its id (made once).
   // THREADBEAR_SYNC=off turns it off for tests and dev runners.
@@ -171,7 +173,8 @@ export type RunnerJson = {
   // bringIn: how often a fork's runner starts a thread to bring in Mike's
   // releases (bring-in.ts): every so many days, 'important' or 'off'.
   releases?: { publish?: boolean; signingKey?: string; bringIn?: number | 'important' | 'off' };
-  models?: { pool?: string | null; privateFolders?: string[]; cursorModel?: string; opencodeModel?: string; poolTimeoutMs?: number };
+  // shortlist: pool id to the model ids its menu shows (absent or empty: all).
+  models?: { pool?: string | null; privateFolders?: string[]; cursorModel?: string; opencodeModel?: string; poolTimeoutMs?: number; shortlist?: Record<string, string[]> };
   // icon: an SF Symbol for this runner in lists (machine.ts works one out).
   // rpcUrl: how a Mac app reaches this runner over the tailnet (step 6 part 2).
   // full: true sends tool output to your Convex deployment as well, scrubbed first
@@ -385,6 +388,7 @@ export function modelSettingsFrom(json: RunnerJson): Config['models'] {
   const cursorModel = json.models?.cursorModel;
   const opencodeModel = json.models?.opencodeModel;
   const poolTimeoutMs = json.models?.poolTimeoutMs;
+  const shortlist = parseShortlists(json.models?.shortlist).shortlists;
   return {
     // Absent or not a string: the Claude pool. null is Mike saying none.
     // A Mac with no Claude login and a Cursor one still runs small jobs
@@ -394,6 +398,7 @@ export function modelSettingsFrom(json: RunnerJson): Config['models'] {
     ...(typeof cursorModel === 'string' && cursorModel.trim() ? { cursorModel: cursorModel.trim() } : {}),
     ...(typeof opencodeModel === 'string' && opencodeModel.trim() ? { opencodeModel: opencodeModel.trim() } : {}),
     ...(typeof poolTimeoutMs === 'number' && Number.isFinite(poolTimeoutMs) && poolTimeoutMs > 0 ? { poolTimeoutMs } : {}),
+    ...(shortlist ? { shortlist } : {}),
   };
 }
 
