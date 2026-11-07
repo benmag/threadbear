@@ -24,10 +24,11 @@ NODE="${THREADBEAR_NODE:-$HOME/.nvm/versions/node/v24.22.1/bin/node}"
 NPM="$(dirname "$NODE")/npm"
 [ -x "$NPM" ] || NPM="npm"
 
-# The checkout with main checked out, from git's own list.
+# The checkout with main checked out, from git's own list. awk reads it all:
+# an early exit lets git die of SIGPIPE, which pipefail turns into a failure.
 MAIN="$(git -C "$ROOT" worktree list --porcelain | awk '
   /^worktree / { path = substr($0, 10) }
-  /^branch refs\/heads\/main$/ { print path; exit }
+  /^branch refs\/heads\/main$/ && !found { print path; found = 1 }
 ')"
 
 # Brings the main checkout's install in `$1` up to its package-lock.json
