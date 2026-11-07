@@ -93,9 +93,9 @@ You fork the code, so you can change anything. My changes come as a daily releas
 - **Schedules that run on any of your Macs.** Send a thread a message at a set
   time, once or over and over, or start a new thread each time, on whichever
   Mac you pick.
-- **Runs on your own Claude or Codex login.** It drives the official `claude`
-  and `codex` command line tools, logged in as you, and never reads or copies
-  your login tokens.
+- **Runs on your own Claude, Codex or Cursor login.** It drives the official `claude`,
+  `codex` and `agent` command line tools, logged in as you, and never reads or copies
+  your login tokens. Cursor runs through `agent acp` (the Agent Client Protocol).
 
 The [launch video](https://www.youtube.com/watch?v=HCR6jqR0LEI) goes through
 all of it in about 25 minutes, so grab yourself a lovely cup of tea first.
@@ -108,7 +108,7 @@ You'll need:
 
 - A Mac with Apple silicon, on macOS 26 or later
 - Xcode 26 or newer, and Node 24 or newer
-- Claude Code or Codex, installed and logged in
+- Claude Code, Codex, or the Cursor CLI (`agent` / `cursor-agent`), installed and logged in
 - A free [Convex](https://convex.dev) account
 - The GitHub CLI (`gh`), to make your fork
 

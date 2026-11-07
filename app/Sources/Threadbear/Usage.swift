@@ -129,7 +129,7 @@ extension AppModel {
     func signInAccount(for thread: ThreadSummary) -> Account? {
         guard thread.status == .error, loadedSession(thread.id)?.lastTurnErrorKind == .auth else { return nil }
         return account(thread.accountId)
-            ?? Account(id: thread.provider == "codex" ? "codex-main" : "claude-main", provider: thread.provider, title: thread.provider)
+            ?? Account(id: thread.provider == "codex" ? "codex-main" : thread.provider == "cursor" ? "cursor-main" : "claude-main", provider: thread.provider, title: thread.provider)
     }
 
     /// Opens Terminal on the CLI's own sign-in for that login, the same
@@ -207,17 +207,20 @@ enum SignIn {
     /// `cliPath` is the binary the runner starts for new sessions (Codex is
     /// often Threadbear's own copy, not on the PATH); empty uses the PATH's.
     static func script(_ account: Account, cliPath: String) -> String {
+        let cursor = account.provider == "cursor"
         let codex = account.provider == "codex"
         var env = ""
         if codex, !account.configDir.isEmpty { env = "CODEX_HOME=\(quoted(account.configDir)) " }
-        if !codex, account.id != "claude-main", !account.configDir.isEmpty { env = "CLAUDE_CONFIG_DIR=\(quoted(account.configDir)) " }
-        let binary = cliPath.isEmpty ? (codex ? "codex" : "claude") : quoted(cliPath)
+        if !codex, !cursor, account.id != "claude-main", !account.configDir.isEmpty { env = "CLAUDE_CONFIG_DIR=\(quoted(account.configDir)) " }
+        let binary = cliPath.isEmpty ? (cursor ? "agent" : codex ? "codex" : "claude") : quoted(cliPath)
+        let name = cursor ? "Cursor" : codex ? "Codex" : "Claude"
+        let login = cursor || codex ? "login" : "auth login"
         return """
         #!/bin/zsh -l
         export PATH="$HOME/.local/bin:$PATH"
-        echo "Signing in to \(codex ? "Codex" : "Claude") for Threadbear (\(account.title))."
+        echo "Signing in to \(name) for Threadbear (\(account.title))."
         echo
-        \(env)\(binary) \(codex ? "login" : "auth login")
+        \(env)\(binary) \(login)
         echo
         echo "Done. Go back to Threadbear and press Send again. You can close this window."
 

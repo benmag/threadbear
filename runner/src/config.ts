@@ -33,10 +33,11 @@ export const DEFAULT_POOL_FOLDERS: Record<string, string[]> = {};
 export type CliUpdatesConfig = {
   claude: CliPolicy;
   codex: CliPolicy;
+  cursor: CliPolicy;
   checkMinutes: number;
   keepCodexVersions: number; // Codex copies kept under <home>/tools/codex
 };
-export const DEFAULT_CLI_UPDATES: CliUpdatesConfig = { claude: 'auto', codex: 'auto', checkMinutes: 60, keepCodexVersions: 2 };
+export const DEFAULT_CLI_UPDATES: CliUpdatesConfig = { claude: 'auto', codex: 'auto', cursor: 'auto', checkMinutes: 60, keepCodexVersions: 2 };
 
 // Everything that differs between the real install and a test lives here, so
 // tests can point THREADBEAR_HOME and THREADBEAR_PORT somewhere harmless and
@@ -76,6 +77,9 @@ export type Config = {
   // Threadbear's own copy (<home>/tools/codex/current), or until there is
   // one the codex next to the runner's Node; never ~/.local/bin/codex.
   codexPath?: string;
+  // A Cursor CLI set by hand (`agent` / `cursor-agent`). Unset: look up
+  // ~/.local/bin/cursor-agent, ~/.local/bin/agent, then PATH.
+  cursorPath?: string;
   codexArgs: string[]; // extra `codex app-server` arguments
   codexMainDir: string; // codex-main's CODEX_HOME
   tokenStatsLimitsFile: string; // Token Stats' limits.json, read only
@@ -144,6 +148,7 @@ export type RunnerJson = {
   idleMinutes?: number;
   maxLiveCLIs?: number;
   codexPath?: string;
+  cursorPath?: string;
   codexArgs?: string[];
   cliUpdates?: Partial<CliUpdatesConfig>;
   accountNotes?: Record<string, string>;
@@ -238,6 +243,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     : (json.idleMinutes ?? 30) * 60_000;
   const maxLive = Number(env.THREADBEAR_MAX_LIVE || json.maxLiveCLIs || DEFAULT_MAX_LIVE);
   const codexPath = nonEmpty(env.THREADBEAR_CODEX_PATH) ?? nonEmpty(json.codexPath);
+  const cursorPath = nonEmpty(env.THREADBEAR_CURSOR_PATH) ?? nonEmpty(json.cursorPath);
   const models = providerMap(json.defaults?.models, nonEmpty);
   const efforts = providerMap(json.defaults?.efforts, (v) => (isEffortLevel(v) ? v : undefined));
   return {
@@ -270,6 +276,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...(json.releases?.publish === true ? { releases: { publish: true, ...(typeof json.releases.signingKey === 'string' ? { signingKey: expandHome(json.releases.signingKey) } : {}) } } : {}),
     models: modelSettingsFrom(json),
     ...(codexPath ? { codexPath: expandHome(codexPath) } : {}),
+    ...(cursorPath ? { cursorPath: expandHome(cursorPath) } : {}),
     codexArgs: Array.isArray(json.codexArgs) ? json.codexArgs.filter((a): a is string => typeof a === 'string') : [],
     codexMainDir: expandHome(env.THREADBEAR_CODEX_MAIN_DIR || '~/.codex'),
     tokenStatsLimitsFile: expandHome(
@@ -345,8 +352,8 @@ function stringMap(raw: unknown): Record<string, string> | undefined {
   return Object.fromEntries(Object.entries(raw).filter((e): e is [string, string] => typeof e[1] === 'string'));
 }
 
-// THREADBEAR_CLI_UPDATES=off turns both off whatever runner.json says: tests
-// and dev runners must never install a CLI.
+// THREADBEAR_CLI_UPDATES=off turns every CLI's updates off whatever
+// runner.json says: tests and dev runners must never install a CLI.
 function cliUpdatesConfig(raw: Partial<CliUpdatesConfig> | undefined, envValue: string | undefined): CliUpdatesConfig {
   const policy = (v: unknown, fallback: CliPolicy): CliPolicy =>
     typeof v === 'string' && (CLI_POLICIES as readonly string[]).includes(v) ? (v as CliPolicy) : fallback;
@@ -356,6 +363,7 @@ function cliUpdatesConfig(raw: Partial<CliUpdatesConfig> | undefined, envValue: 
   return {
     claude: off ? 'off' : policy(raw?.claude, DEFAULT_CLI_UPDATES.claude),
     codex: off ? 'off' : policy(raw?.codex, DEFAULT_CLI_UPDATES.codex),
+    cursor: off ? 'off' : policy(raw?.cursor, DEFAULT_CLI_UPDATES.cursor),
     checkMinutes: count(raw?.checkMinutes, DEFAULT_CLI_UPDATES.checkMinutes, 1),
     // Fewer than 2 would leave nothing for "Go back".
     keepCodexVersions: count(raw?.keepCodexVersions, DEFAULT_CLI_UPDATES.keepCodexVersions, 2),

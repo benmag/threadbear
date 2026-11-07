@@ -164,8 +164,9 @@ function checkMac() {
   ok(`Node ${process.versions.node} (${process.execPath})`);
   const claude = fs.existsSync(path.join(os.homedir(), '.local', 'bin', 'claude')) || has('claude');
   const codex = has('codex');
-  if (!claude && !codex) throw new Fail('Neither Claude Code nor Codex is installed. Install one and log in first: https://claude.com/claude-code or https://developers.openai.com/codex');
-  ok([claude && 'Claude Code', codex && 'Codex'].filter(Boolean).join(' and '));
+  const cursor = fs.existsSync(path.join(os.homedir(), '.local', 'bin', 'cursor-agent')) || fs.existsSync(path.join(os.homedir(), '.local', 'bin', 'agent')) || has('cursor-agent');
+  if (!claude && !codex && !cursor) throw new Fail('Neither Claude Code, Codex nor the Cursor CLI is installed. Install one and log in first: https://claude.com/claude-code, https://developers.openai.com/codex or https://cursor.com/docs/cli');
+  ok([claude && 'Claude Code', codex && 'Codex', cursor && 'Cursor'].filter(Boolean).join(' and '));
   // The runner is a login agent, which macOS only loads for someone logged in
   // to the desktop: over SSH to a Mac nobody's logged in to, step 8 can't
   // finish (seen on Tinker Desk, 28 Oct).

@@ -15,8 +15,10 @@ Run these and fix what's missing before going on:
 - `node -v`: 24 or newer. If not, install it with nvm
   (`nvm install 24 && nvm use 24`) or Homebrew (`brew install node@24`), and
   use that `node` for the rest.
-- Claude Code (`~/.local/bin/claude` or `claude` on the PATH) or Codex
-  (`codex`): one of them installed and logged in. You're probably running in
+- Claude Code (`~/.local/bin/claude` or `claude` on the PATH), Codex
+  (`codex`), or the Cursor CLI (`~/.local/bin/cursor-agent`, `~/.local/bin/agent`,
+  or `cursor-agent` on the PATH): one of them installed and logged in.
+  Cursor's login is `agent login` (check with `agent status`). You're probably running in
   one of them already.
 - `launchctl print gui/$(id -u) >/dev/null && echo yes`: says `yes` when
   someone is logged in to the desktop. The runner only starts for a desktop
@@ -128,8 +130,9 @@ Hetzner cloud server with 8 GB. Do this as an ordinary user with sudo, not root.
    installer (`curl -fsSL https://claude.ai/install.sh | bash`, which puts
    it in `~/.local/bin/claude`, where the runner looks), then
    `claude auth login`; Codex with `npm i -g @openai/codex`, then
-   `codex login --device-auth`. Both print a link for them to open in their
-   own browser. Never copy credentials over from the Mac.
+   `codex login --device-auth`; or the Cursor CLI
+   (`curl https://cursor.com/install -fsS | bash`, then `agent login`).
+   Each prints a link for them to open in their own browser. Never copy credentials over from the Mac.
 4. **Tailscale:** install it and `sudo tailscale up --hostname=<name>`, and
    **Ask** them to open the link it prints. Once it's on their tailnet, close
    the server's public SSH port in the cloud's firewall and use the tailnet

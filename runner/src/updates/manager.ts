@@ -9,6 +9,7 @@
 // releases idle sessions on the old version (hooks.releaseIdle), and the
 // rest move as their turns end; every new process starts the new version.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { Clock, TimerHandle } from '../clock.ts';
 import type { Config } from '../config.ts';
@@ -18,6 +19,7 @@ import type { CliPolicy, CliStatus, Provider } from '../protocol.ts';
 import { PROVIDERS } from '../protocol.ts';
 import { claudeChannel, claudeInstalledVersion, claudeLatestVersion, runClaudeUpdate } from './claude.ts';
 import { CodexCopies, NPM_LATEST, codexPackageVersion, type CodexResolver, type SurfaceCheck } from './codex.ts';
+import { findCursorBinary, versionFromCursorPath } from '../adapters/cursor/cli.ts';
 import { VERSION_RE, compareVersions, defaultExec, defaultFetchText, type Exec, type FetchText } from './exec.ts';
 import { UpdateHistory, type ProviderState, type UpdatesFile } from './history.ts';
 
@@ -126,6 +128,13 @@ export class CliUpdates {
     while (this.work.size) await Promise.allSettled([...this.work]);
   }
 
+  // The Cursor CLI new sessions start. A path set by hand, else the usual
+  // install. Missing means Cursor threads can't start; Threadbear does not
+  // download it itself (its installer is `agent update` once it's there).
+  cursorBinary(): string {
+    return this.cfg.cursorPath ?? findCursorBinary({ pathEnv: this.env.PATH }) ?? path.join(os.homedir(), '.local', 'bin', 'cursor-agent');
+  }
+
   // What the next Codex process should start: the binary set by hand, else
   // Threadbear's own `current`, else (before the first copy is installed,
   // or with updates off, as in tests and dev runners) the codex next to the
@@ -185,7 +194,9 @@ export class CliUpdates {
       const message =
         p === 'claude'
           ? `Claude Code ${version} failed to start twice. To go back: claude install ${this.lastClaude ?? '<version>'}`
-          : `Codex ${version} failed to start twice.${prev ? ` Go back to ${prev} in Usage.` : ''}`;
+          : p === 'codex'
+            ? `Codex ${version} failed to start twice.${prev ? ` Go back to ${prev} in Usage.` : ''}`
+            : `Cursor ${version} failed to start twice.`;
       this.d.notice?.('warning', message);
       this.history.append({ at: this.iso(), provider: p, action: 'notice', ok: false, version, message });
     }
@@ -200,7 +211,7 @@ export class CliUpdates {
     const latestVersion = s.latestVersion;
     const codexState = p === 'codex' && this.managedCodex() ? this.copies.state() : undefined;
     const hold = codexState?.hold;
-    const binary = p === 'claude' ? this.cfg.claudePath : this.codexBinary();
+    const binary = p === 'claude' ? this.cfg.claudePath : p === 'codex' ? this.codexBinary() : this.cursorBinary();
     let status: CliStatus['status'];
     if (!installedVersion) status = fs.existsSync(binary) ? 'unknown' : 'missing';
     else if (hold && latestVersion === hold.version && compareVersions(installedVersion, hold.version) < 0) status = 'held';
@@ -209,7 +220,7 @@ export class CliUpdates {
     const out: CliStatus = {
       provider: p,
       path: binary,
-      managedBy: p === 'claude' ? 'cli' : this.cfg.codexPath ? 'none' : 'threadbear',
+      managedBy: p === 'codex' ? (this.cfg.codexPath ? 'none' : 'threadbear') : 'cli',
       status,
       policy: this.policy(p),
       inUse: this.d.hooks.versionsInUse(p),
@@ -248,8 +259,10 @@ export class CliUpdates {
     const claude = await claudeInstalledVersion(this.cfg.claudePath, this.exec);
     const bin = this.codexBinary();
     const codex = bin === this.copies.currentLink ? this.copies.currentVersion() : codexPackageVersion(bin);
-    const changed = claude !== this.installed.claude || codex !== this.installed.codex;
-    this.installed = { claude, codex };
+    const cursorBin = this.cursorBinary();
+    const cursor = fs.existsSync(cursorBin) ? await this.cursorInstalled(cursorBin) : undefined;
+    const changed = claude !== this.installed.claude || codex !== this.installed.codex || cursor !== this.installed.cursor;
+    this.installed = { claude, codex, cursor };
     if (claude) this.lastClaude ??= claude;
     if (changed) this.changed();
   }
@@ -282,6 +295,10 @@ export class CliUpdates {
     const policy = this.policy(p);
     if (policy === 'off' && !asked) return;
     if (this.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC) return;
+    if (p === 'cursor') {
+      await this.checkCursor(asked);
+      return;
+    }
     try {
       const latest =
         p === 'claude'
@@ -324,7 +341,7 @@ export class CliUpdates {
       return;
     }
     this.setUpdate(p, { state: 'running', targetVersion: target });
-    const promise = (p === 'claude' ? this.updateClaude(attempt) : this.updateCodex(o)).catch((e: Error) => {
+    const promise = (p === 'claude' ? this.updateClaude(attempt) : p === 'codex' ? this.updateCodex(o) : this.updateCursor()).catch((e: Error) => {
       this.d.log.error('cli updates: update failed', { provider: p, error: e.message });
       this.finish(p, { state: 'failed', targetVersion: target, message: e.message });
     });
@@ -335,6 +352,61 @@ export class CliUpdates {
         delete this.running[p];
       }),
     );
+  }
+
+  // No version feed. `agent update` is the check: it is a no-op when the
+  // CLI is already current, and it is skipped entirely when the binary
+  // isn't installed (Threadbear does not download Cursor for you).
+  private async checkCursor(asked: boolean): Promise<void> {
+    const s = this.ps('cursor');
+    s.checkedAt = this.iso();
+    const bin = this.cursorBinary();
+    if (!fs.existsSync(bin)) {
+      this.save();
+      this.changed();
+      return;
+    }
+    this.save();
+    this.changed();
+    // Notify only records that we looked. Auto runs the installer, which
+    // exits without changing anything when this is already the latest.
+    if (!asked && this.policy('cursor') !== 'auto') return;
+    if (this.policy('cursor') === 'auto') this.startUpdate('cursor', {});
+  }
+
+  private async cursorInstalled(bin: string): Promise<string | undefined> {
+    const fromPath = versionFromCursorPath(bin);
+    if (fromPath) return fromPath;
+    const r = await this.exec(bin, ['--version'], { timeoutMs: 10_000 });
+    return r.code === 0 ? (r.stdout + r.stderr).match(VERSION_RE)?.[0] : undefined;
+  }
+
+  private async updateCursor(): Promise<void> {
+    const bin = this.cursorBinary();
+    const target = this.st.cursor?.latestVersion;
+    if (!fs.existsSync(bin)) {
+      this.finish('cursor', { state: 'failed', targetVersion: target, message: `The Cursor CLI isn't at ${bin}. Install it from https://cursor.com/docs/cli, then check again.` });
+      return;
+    }
+    const before = this.installed.cursor;
+    const r = await this.exec(bin, ['update'], { timeoutMs: RUN_TIMEOUT_MS, env: this.env });
+    const after = (await this.cursorInstalled(bin)) ?? before;
+    if (after) this.installed.cursor = after;
+    if (r.code !== 0) {
+      const message = (r.stderr || r.stdout || r.error || 'update failed').trim().slice(0, 500);
+      this.history.append({ at: this.iso(), provider: 'cursor', action: 'update', ok: false, message, output: r.stdout });
+      this.finish('cursor', { state: 'failed', targetVersion: target, message });
+      return;
+    }
+    if (after) this.ps('cursor').latestVersion = after;
+    if (before && after && before !== after) {
+      this.history.append({ at: this.iso(), provider: 'cursor', action: 'update', ok: true, version: after, message: `from ${before}`, output: r.stdout });
+      this.finish('cursor', { state: 'succeeded', targetVersion: after });
+      this.d.hooks.releaseIdle('cursor', after);
+    } else {
+      this.history.append({ at: this.iso(), provider: 'cursor', action: 'update', ok: true, version: after, message: 'unchanged', output: r.stdout });
+      this.finish('cursor', { state: 'unchanged', targetVersion: after });
+    }
   }
 
   private async updateClaude(attempt: number): Promise<void> {

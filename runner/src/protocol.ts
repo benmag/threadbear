@@ -4,8 +4,8 @@
 
 export const PROTOCOL_VERSION = 1;
 
-export type Provider = 'claude' | 'codex';
-export const PROVIDERS: readonly Provider[] = ['claude', 'codex'];
+export type Provider = 'claude' | 'codex' | 'cursor';
+export const PROVIDERS: readonly Provider[] = ['claude', 'codex', 'cursor'];
 
 export function isProvider(v: unknown): v is Provider {
   return typeof v === 'string' && (PROVIDERS as readonly string[]).includes(v);

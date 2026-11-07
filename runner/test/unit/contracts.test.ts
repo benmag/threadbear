@@ -30,7 +30,7 @@ test('config: the step 4 settings default safely', () => {
   assert.deepEqual(cfg.codexArgs, []);
   assert.ok(cfg.codexMainDir.endsWith('/.codex'));
   assert.ok(cfg.tokenStatsLimitsFile.endsWith('/Token Stats/limits.json'));
-  assert.deepEqual(cfg.cliUpdates, { claude: 'auto', codex: 'auto', checkMinutes: 60, keepCodexVersions: 2 });
+  assert.deepEqual(cfg.cliUpdates, { claude: 'auto', codex: 'auto', cursor: 'auto', checkMinutes: 60, keepCodexVersions: 2 });
   // Nobody's notes or pool folders by default: Mike's are in his runner.json.
   assert.deepEqual(cfg.accountNotes, {});
   assert.deepEqual(cfg.poolFolders, {});
@@ -62,7 +62,7 @@ test('config: runner.json and env set the step 4 settings', () => {
   assert.deepEqual(cfg.defaults.efforts, { codex: 'low' });
   assert.ok(cfg.codexPath?.endsWith('/bin/codex') && !cfg.codexPath.startsWith('~'));
   assert.deepEqual(cfg.codexArgs, ['-c', 'features.memories=false']);
-  assert.deepEqual(cfg.cliUpdates, { claude: 'auto', codex: 'notify', checkMinutes: 15, keepCodexVersions: 2 });
+  assert.deepEqual(cfg.cliUpdates, { claude: 'auto', codex: 'notify', cursor: 'auto', checkMinutes: 15, keepCodexVersions: 2 });
   assert.deepEqual(cfg.accountNotes, { 'claude-3': 'Tests' }, "runner.json's notes replace the default ones");
 
   const env = loadConfig({
@@ -77,6 +77,7 @@ test('config: runner.json and env set the step 4 settings', () => {
   assert.equal(env.tokenStatsLimitsFile, '/tmp/limits.json');
   assert.equal(env.cliUpdates.claude, 'off', 'THREADBEAR_CLI_UPDATES=off wins over runner.json');
   assert.equal(env.cliUpdates.codex, 'off');
+  assert.equal(env.cliUpdates.cursor, 'off');
 });
 
 test('SessionNotFoundError is an Error the runner can tell apart', () => {
