@@ -45,7 +45,7 @@ export function step(name, cmd, args, opts, io = {}) {
   const { say = console.log, write = (s) => process.stdout.write(s), error = console.error, spawn = spawnSync, tmpdir = os.tmpdir() } = io;
   write(`${name}... `);
   const started = Date.now();
-  const logFile = path.join(tmpdir, `threadbear-deploy-${process.pid}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.log`);
+  const logFile = path.join(tmpdir, `threadbear-deploy-${process.pid}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60)}.log`);
   const fd = fs.openSync(logFile, 'w');
   const r = spawn(cmd, args, { ...opts, stdio: ['ignore', fd, fd] });
   fs.closeSync(fd);
