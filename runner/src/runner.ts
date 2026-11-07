@@ -77,6 +77,7 @@ import { cleanUpWorktree, makeWorktree, sameSubfolder, worktreeInstructions } fr
 import { stripModelSuffix, type AccountRegistry, type LearnedAccountInfo } from './accounts.ts';
 import { pickAccount as pickByRoom, resetTime, type UsageReading } from './usage.ts';
 import { DEFAULT_POOL_FOLDERS, RUNNER_VERSION, expandHome, paths, readRunnerJson, writeRunnerJson, type Config } from './config.ts';
+import { parseShortlists, reportedAccounts } from './model-shortlist.ts';
 import { WAIT_SLACK_MS, blockedUntil, limitWhy, loginOk, nextLogin, pickInPool, poolAccounts, poolForFolder, poolProviders, readPools, roomWait, validatePools } from './pools.ts';
 import { copyImageInto, imageRefFor } from './media.ts';
 import { isDirectory } from './fsutil.ts';
@@ -638,6 +639,8 @@ export class Runner {
   accountsTimer?: TimerHandle;
   accountsSentAt = -Infinity;
   accountsShown?: string; // the last list clients were sent (or got in hello's time)
+  // The shortlisted ids the CLI didn't offer, per pool, as last logged.
+  private shortlistSkipped = new Map<string, string>();
   private cursorLoginAt = 0;
   private opencodeLoginAt = 0;
   // E's last Codex status, to notice an update activating (or a first
@@ -752,7 +755,9 @@ export class Runner {
     // So are waits for the network.
     this.armNetTimer(true);
     this.log.info('runner loaded threads', { count: this.threads.size });
-    this.accountsShown = accountsKey(this.safeAccounts());
+    const shortlistError = parseShortlists(readRunnerJson(this.cfg.home).models?.shortlist).error;
+    if (shortlistError) this.log.warn(shortlistError);
+    this.accountsShown = accountsKey(this.reportedAccounts());
     this.poolsShown = JSON.stringify(this.pools());
     void this.probeModels();
     void this.refreshCursorLogin();
@@ -829,6 +834,39 @@ export class Runner {
     }
   }
 
+  // The list clients see. Both ways a model list arrives (adapter.models()
+  // in probeModels, and the one a session learns) are stored whole on the
+  // account; the menu is this copy, cut to the pools' shortlists
+  // (model-shortlist.ts) plus the default and every model a thread on the
+  // login uses. Small jobs read safeAccounts(), the whole list.
+  reportedAccounts(accounts = this.safeAccounts()): Account[] {
+    const shortlists = this.cfg.models.shortlist;
+    if (!shortlists || !Object.keys(shortlists).length) return accounts;
+    return reportedAccounts(accounts, {
+      pools: this.pools(accounts),
+      shortlists,
+      keep: (account) => this.menuKeeps(account),
+      onSkipped: (poolId, ids) => {
+        const key = ids.join('\n');
+        if (this.shortlistSkipped.get(poolId) === key) return;
+        this.shortlistSkipped.set(poolId, key);
+        this.log.debug('model shortlist skipped ids the CLI does not offer', { poolId, ids: ids.join(', ') });
+      },
+    });
+  }
+
+  private menuKeeps(account: Account): string[] {
+    const ids = [account.defaultModel, this.defaultModelFor(account.provider)];
+    for (const { rec } of this.threads.values()) if (rec.accountId === account.id) ids.push(rec.model, rec.modelInUse);
+    return ids.filter((id): id is string => Boolean(id));
+  }
+
+  // A thread was made or changed its model: with a shortlist, the menu may
+  // now need that model.
+  noteShortlist(): void {
+    if (Object.keys(this.cfg.models.shortlist ?? {}).length) this.accountsChanged();
+  }
+
   // Reads the account list again every ACCOUNT_RESCAN_MS, so a login added
   // in Token Stats shows up in the app (and gets its models asked for)
   // without a reconnect.
@@ -848,7 +886,7 @@ export class Runner {
     if (fresh.size) void this.probeModels((a) => fresh.has(a.id));
     void this.refreshCursorLogin();
     void this.refreshOpenCodeLogin();
-    if (accountsKey(list) !== this.accountsShown) this.accountsChanged();
+    if (accountsKey(this.reportedAccounts(list)) !== this.accountsShown) this.accountsChanged();
   }
 
   // accounts.updated, level-triggered: the first change goes out at once,
@@ -876,12 +914,13 @@ export class Runner {
       this.poolsShown = poolsKey;
       this.notify({ method: 'pools.updated', params: { pools } });
     }
-    const key = accountsKey(accounts);
+    const shown = this.reportedAccounts(accounts);
+    const key = accountsKey(shown);
     // A change that went back to what clients already have isn't news.
     if (key === this.accountsShown) return;
     this.accountsShown = key;
     this.accountsSentAt = this.clock.now();
-    this.notify({ method: 'accounts.updated', params: { accounts } });
+    this.notify({ method: 'accounts.updated', params: { accounts: shown } });
   }
 
   // A thread folder whose thread.json can't be read: rebuild what can be
@@ -1179,8 +1218,9 @@ export class Runner {
   // --------------------------------------------------------------- queries
 
   hello(): { runnerVersion: string; protocol: number; accounts: Account[]; pools: Pool[]; defaults: RunnerDefaults; clis?: CliStatus[] } {
-    const accounts = this.accounts.list();
-    const pools = this.pools(accounts);
+    const all = this.accounts.list();
+    const pools = this.pools(all);
+    const accounts = this.reportedAccounts(all);
     const defaults: RunnerDefaults = { cwd: this.cfg.defaults.cwd, accountId: this.defaultAccountId(accounts) };
     const poolId = this.defaultPoolId(pools, this.usable(accounts), defaults.accountId);
     if (poolId) defaults.poolId = poolId;
@@ -2619,6 +2659,7 @@ export class Runner {
     if (model !== rec.model) {
       if (model) rec.model = model;
       else delete rec.model;
+      this.noteShortlist();
       if (rt.session && !release) {
         rt.session.setModel(model).catch(() => {
           rt.releaseWhenIdle = true;

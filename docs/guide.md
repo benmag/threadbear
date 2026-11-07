@@ -810,6 +810,42 @@ reset.
 The first time a pool has a second login, a card by the composer says
 what pools do.
 
+A pool can have a model shortlist, so its model menu isn't hundreds long
+(Cursor lists one id per effort level and fast variant). Name the pool and
+the ids to show, in order, with `tb models shortlist <pool> <id>...`, or
+under `models.shortlist` in `runner.json`. `tb models shortlist <pool> all`
+(or an empty list) goes back to showing every model, and `tb models
+shortlist` lists what's set. A thread's own model, the login's default and the
+model new threads on it start with stay in the menu even when they aren't
+named, and an id the login no longer offers is skipped. A login in two pools
+shows both pools' picks. Titles and the librarian still choose from the full
+list. For a Cursor pool with the id `cursor`:
+
+```json
+"models": {
+  "shortlist": {
+    "cursor": [
+      "auto",
+      "composer-2.5",
+      "composer-2.5-fast",
+      "claude-opus-5-5-high",
+      "claude-sonnet-5-5-high",
+      "claude-haiku-5-5-thinking-medium",
+      "claude-fable-5-1-thinking-high",
+      "gpt-5.6-sol-high",
+      "gpt-5.6-terra-medium",
+      "gpt-5.6-luna-medium",
+      "gpt-5.3-codex",
+      "grok-4.7-high",
+      "gemini-4-argon-high",
+      "gemini-3.8-flash-medium",
+      "kimi-k3-max",
+      "deepseek-v41-flash-1017-medium"
+    ]
+  }
+}
+```
+
 With more than one machine, they all share the same pools, so you set them
 up once from Settings > Pools on any of them. A pool knows its logins by
 email, and each machine uses the ones it's signed in to: a pool of three

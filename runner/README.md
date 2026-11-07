@@ -269,7 +269,16 @@ itself"); `THREADBEAR_FOLLOW_MAIN=0` does the same for one run.
 whose Claude logins answer them through the CLI (default `"claude"`,
 `null` for none, which turns titles and the librarian off), and folders
 whose threads are never sent. The app's Settings window and `tb settings`
-show and change both.
+show and change both. `models.shortlist` is separate: it maps a pool id to
+the model ids that pool's menu shows (`tb models shortlist <pool> <id>...`).
+Nothing is shortlisted unless you set it, and an empty list shows every model.
+A thread's own model and the login's default always stay listed, and small
+jobs still choose from the full list. A Cursor pool with the id `cursor`:
+
+```json
+"models": { "shortlist": { "cursor": [ "auto", "composer-2.5", "composer-2.5-fast", "claude-opus-5-5-high", "claude-sonnet-5-5-high", "claude-haiku-5-5-thinking-medium", "claude-fable-5-1-thinking-high", "gpt-5.6-sol-high", "gpt-5.6-terra-medium", "gpt-5.6-luna-medium", "gpt-5.3-codex", "grok-4.7-high", "gemini-4-argon-high", "gemini-3.8-flash-medium", "kimi-k3-max", "deepseek-v41-flash-1017-medium" ] } }
+```
+
 
 Environment variables, mainly for tests:
 
