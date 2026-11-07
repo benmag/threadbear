@@ -31,14 +31,10 @@ extension AppModel {
         if !settings.defaultCwd.isEmpty { defaults.cwd = (settings.defaultCwd as NSString).expandingTildeInPath }
     }
 
-    /// Pools with a Claude login: only those can take small jobs (titles,
-    /// the librarian). Settings › Models and the Librarian's page pick
-    /// from these.
-    var claudePools: [Pool] {
-        pools.filter { pool in
-            pool.accountIds.contains { id in accounts.contains { $0.id == id && $0.provider == "claude" } }
-        }
-    }
+    /// Pools with a Claude or Cursor login: those can take small jobs
+    /// (titles, the librarian). Settings › Models and the Librarian's
+    /// page pick from these.
+    var claudePools: [Pool] { SmallJobs.pools(pools, accounts: accounts) }
 
     /// Settings › Models, from somewhere else in the app.
     func openModelSettings() {

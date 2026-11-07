@@ -208,25 +208,43 @@ test('ask mode shows an approval card and resume loads the session', async () =>
   void decision;
 });
 
-test('threadbear MCP answers initialize and tools/list over SSE', async () => {
+test('threadbear MCP lists end_turn on the HTTP url the CLI posts to', async () => {
   const mcp = await ThreadbearMcp.start(
-    [{ name: 'list_threads', description: 'List threads', inputSchema: {}, handler: async () => ({ content: [{ type: 'text', text: 'none' }] }) }],
-    'Use end_turn.',
+    [
+      { name: 'end_turn', description: 'End the turn', inputSchema: {}, handler: async () => ({ content: [{ type: 'text', text: 'Noted.' }] }) },
+      { name: 'list_threads', description: 'List threads', inputSchema: {}, handler: async () => ({ content: [{ type: 'text', text: 'none' }] }) },
+    ],
+    'End every turn by calling end_turn.',
   );
   try {
-    const sse = await fetch(mcp.endpoint.url);
+    assert.equal(mcp.endpoint.type, 'http');
+    assert.match(mcp.endpoint.url, /\/mcp\//);
+    const post = (method: string, id: number, params?: unknown) =>
+      fetch(mcp.endpoint.url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) }),
+      });
+    const init = await post('initialize', 1, { protocolVersion: '2025-03-26' });
+    assert.equal(init.status, 200);
+    assert.equal(init.headers.get('content-type'), 'application/json');
+    const initBody = (await init.json()) as { result: { instructions: string; serverInfo: { name: string } } };
+    assert.equal(initBody.result.serverInfo.name, 'threadbear');
+    assert.match(initBody.result.instructions, /end_turn/);
+    const list = await post('tools/list', 2);
+    const listed = (await list.json()) as { result: { tools: { name: string }[] } };
+    assert.deepEqual(
+      listed.result.tools.map((t) => t.name),
+      ['end_turn', 'list_threads'],
+    );
+    const call = await post('tools/call', 3, { name: 'end_turn', arguments: {} });
+    const called = (await call.json()) as { result: { content: { text: string }[] } };
+    assert.equal(called.result.content[0].text, 'Noted.');
+    // The older SSE transport still answers, for a client that asks for it.
+    const sseUrl = mcp.endpoint.url.replace('/mcp/', '/sse/');
+    const sse = await fetch(sseUrl);
     assert.equal(sse.ok, true);
-    const reader = sse.body!.getReader();
-    const first = new TextDecoder().decode((await reader.read()).value);
-    assert.match(first, /event: endpoint/);
-    const messageUrl = first.split('data: ')[1].trim();
-    const post = await fetch(messageUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05' } }) });
-    assert.equal(post.status, 202);
-    let body = '';
-    for (let i = 0; i < 5 && !body.includes('threadbear'); i++) body += new TextDecoder().decode((await reader.read()).value);
-    assert.match(body, /event: message/);
-    assert.match(body, /Use end_turn/);
-    await reader.cancel();
+    await sse.body?.cancel();
   } finally {
     mcp.stop();
   }

@@ -97,7 +97,7 @@ export type TurnResult = {
 export type AdapterOutput =
   | { kind: 'event'; event: EventBody }
   | { kind: 'delta'; delta: DeltaBody }
-  | { kind: 'session'; nativeSessionId: string; model?: string }
+  | { kind: 'session'; nativeSessionId: string; model?: string; models?: ModelChoice[] }
   // The effort level the CLI applied to the turn that just ended.
   | { kind: 'effort'; level: EffortLevel }
   | { kind: 'context'; contextTokens: number; contextWindow?: number }
@@ -268,7 +268,8 @@ export interface AgentAdapter {
   start(opts: StartSessionOptions, sink: SessionSink): AgentSession;
   // What the account's CLI offers as models, without starting a turn.
   // Optional: a provider without a picker leaves it out.
-  models?(account: Account): Promise<ModelChoice[]>;
+  // A list, or that list plus the account's default when the CLI says which.
+  models?(account: Account): Promise<ModelChoice[] | { models: ModelChoice[]; defaultModel?: string }>;
   // The slash commands the account's CLI offers in a folder (skills
   // included), without starting a turn, for the composer's picker.
   commands?(account: Account, cwd: string, untrusted?: Record<string, unknown>): Promise<SlashCommand[]>;

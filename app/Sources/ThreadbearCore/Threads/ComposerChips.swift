@@ -27,6 +27,9 @@ public enum ComposerChips {
     /// else is shown as it is.
     public static func model(_ model: String?) -> String {
         guard let model, !model.isEmpty else { return "Default" }
+        // Cursor's stand-in for the account default. The models command
+        // calls it Auto; an ACP session can still say default or default[].
+        if model == "auto" || model == "default" || model.hasPrefix("default[") { return "Auto" }
         if model.allSatisfy(\.isLetter) { return model.capitalized }
         if model.lowercased().hasPrefix("gpt-") {
             return model.split(separator: "-", omittingEmptySubsequences: false).enumerated().map { index, part in

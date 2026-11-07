@@ -2,7 +2,8 @@
 // across turns: session/new (or session/load) once, then session/prompt
 // per message. Tool approval is session/request_permission. Full access
 // answers allow-once without a card; ask and plan show the card. There is
-// no rewind and no token total unless the agent sends usage_update.
+// no rewind. This build's prompt result is only a stop reason; a usage
+// object on that result or on usage_update is recorded, and nothing is invented.
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import type { PermissionMode } from '../../protocol.ts';
@@ -15,7 +16,7 @@ import { fileContext } from '../context.ts';
 import type { AgentAdapter, AgentSession, SessionSink, StartSessionOptions, ToolApprovalAnswer, UserInput } from '../types.ts';
 import { SessionNotFoundError } from '../types.ts';
 import { AcpConnection, AcpError, type AcpProcess } from './acp.ts';
-import { cursorModels, cursorStatus, cursorVersion, findCursorBinary } from './cli.ts';
+import { canonicalCursorModel, cursorModels, cursorStatus, cursorVersion, findCursorBinary, parseCursorModels } from './cli.ts';
 import { ThreadbearMcp } from './mcp-http.ts';
 import { CursorNormalizer, commandsOf, effortNote } from './normalize.ts';
 import type { SlashCommand } from '../../slash-commands.ts';
@@ -100,24 +101,29 @@ export class CursorAdapter implements AgentAdapter {
     return this.loginCache;
   }
 
-  async models(): Promise<ModelChoice[]> {
+  private knownDefault?: string;
+
+  async models(): Promise<{ models: ModelChoice[]; defaultModel?: string }> {
     const bin = this.binary();
-    if (!bin) return this.knownModels ?? [];
-    try {
-      const listed = await (this.deps.models ?? cursorModels)(bin);
-      if (listed.models.length) {
-        this.knownModels = listed.models;
-        return listed.models;
+    if (bin) {
+      try {
+        const listed = await (this.deps.models ?? cursorModels)(bin);
+        if (listed.models.length) {
+          this.knownModels = listed.models;
+          this.knownDefault = listed.defaultModel;
+          return listed;
+        }
+      } catch (e) {
+        this.deps.log?.warn('cursor models failed', { error: String(e) });
       }
-    } catch (e) {
-      this.deps.log?.warn('cursor models failed', { error: String(e) });
     }
-    return this.knownModels ?? [];
+    return { models: this.knownModels ?? [], ...(this.knownDefault ? { defaultModel: this.knownDefault } : {}) };
   }
 
   start(opts: StartSessionOptions, sink: SessionSink): AgentSession {
-    return new CursorSession(opts, sink, this.deps, (models) => {
-      if (models.length) this.knownModels = models;
+    return new CursorSession(opts, sink, this.deps, (listed) => {
+      if (listed.models.length) this.knownModels = listed.models;
+      if (listed.defaultModel) this.knownDefault = listed.defaultModel;
     });
   }
 }
@@ -126,7 +132,7 @@ class CursorSession implements AgentSession {
   private opts: StartSessionOptions;
   private sink: SessionSink;
   private deps: CursorAdapterDeps;
-  private learnModels: (models: ModelChoice[]) => void;
+  private learnModels: (listed: { models: ModelChoice[]; defaultModel?: string }) => void;
   private normalizer: CursorNormalizer;
   private conn?: AcpConnection;
   private proc?: AcpProcess;
@@ -148,7 +154,7 @@ class CursorSession implements AgentSession {
   private slash: SlashCommand[] = [];
   private pendingPermissions = new Set<number | string>();
 
-  constructor(opts: StartSessionOptions, sink: SessionSink, deps: CursorAdapterDeps, learnModels: (models: ModelChoice[]) => void) {
+  constructor(opts: StartSessionOptions, sink: SessionSink, deps: CursorAdapterDeps, learnModels: (listed: { models: ModelChoice[]; defaultModel?: string }) => void) {
     this.opts = opts;
     this.sink = sink;
     this.deps = deps;
@@ -212,9 +218,15 @@ class CursorSession implements AgentSession {
     if (!sessionId) throw new Error('Cursor did not return a session id.');
     this.sessionId = sessionId;
     const listed = modelsOf(created);
-    if (listed.length) this.learnModels(listed);
-    const model = this.model || currentModel(created);
-    this.sink.output({ kind: 'session', nativeSessionId: sessionId, ...(model ? { model } : {}) });
+    if (listed.models.length) this.learnModels(listed);
+    const picked = this.model || listed.defaultModel || currentModel(created);
+    const model = picked ? canonicalCursorModel(picked) : '';
+    this.sink.output({
+      kind: 'session',
+      nativeSessionId: sessionId,
+      ...(model ? { model } : {}),
+      ...(listed.models.length ? { models: listed.models } : {}),
+    });
     await this.applySettings(created);
     this.readyOk = true;
   }
@@ -328,7 +340,7 @@ class CursorSession implements AgentSession {
     });
     this.normalizer.begin(input.id);
     const result = (await this.conn!.request('session/prompt', { sessionId: this.sessionId, prompt })) as Any;
-    for (const o of this.normalizer.finish(typeof result?.stopReason === 'string' ? result.stopReason : undefined)) {
+    for (const o of this.normalizer.finish(result && typeof result === 'object' ? result : undefined)) {
       if (o.kind === 'result' && this.queue.length) o.result.queuedTurns = this.queue.length;
       this.sink.output(o);
     }
@@ -505,23 +517,21 @@ function contentBlocks(text: string, images: UserInput['images'], dropped: (note
   return blocks;
 }
 
-function modelsOf(created: Any): ModelChoice[] {
-  const list = created?.models?.availableModels;
-  if (!Array.isArray(list)) return [];
-  const out: ModelChoice[] = [];
-  for (const row of list) {
-    if (!row || typeof row !== 'object') continue;
-    const id = typeof row.modelId === 'string' ? row.modelId : '';
-    if (!id) continue;
-    const title = typeof row.name === 'string' && row.name ? row.name : id;
-    out.push({ id, model: id, title });
-  }
-  return out;
+function modelsOf(created: Any): { models: ModelChoice[]; defaultModel?: string } {
+  const fromModels = parseCursorModels(JSON.stringify({ models: created?.models ?? {} }));
+  const options = Array.isArray(created?.configOptions) ? created.configOptions : [];
+  const modelOption = options.find((row: Any) => row && (row.id === 'model' || /model/i.test(String(row.name ?? ''))));
+  const fromOptions = modelOption
+    ? parseCursorModels(JSON.stringify({ models: modelOption.options ?? [], currentModelId: modelOption.currentValue ?? modelOption.value }))
+    : { models: [] as ModelChoice[] };
+  const models = fromModels.models.length ? fromModels.models : fromOptions.models;
+  const defaultModel = fromModels.defaultModel || fromOptions.defaultModel || currentModel(created);
+  return { models, ...(defaultModel ? { defaultModel } : {}) };
 }
 
 function currentModel(created: Any): string | undefined {
   const id = created?.models?.currentModelId;
-  return typeof id === 'string' && id ? id : undefined;
+  return typeof id === 'string' && id ? canonicalCursorModel(id) : undefined;
 }
 
 function effortOptionId(created: Any): string | undefined {

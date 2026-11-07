@@ -11,6 +11,10 @@ import { VERSION_RE } from '../../updates/exec.ts';
 
 const ANSI = /\u001b\[[0-9;]*m/g;
 
+function stripCliText(text: string): string {
+  return text.replace(ANSI, '').replace(/\u001b\][^\u0007]*\u0007/g, '');
+}
+
 export type CursorBinaryOptions = {
   // runner.json `cursorPath` or THREADBEAR_CURSOR_PATH, used as given.
   explicit?: string;
@@ -74,13 +78,28 @@ export function parseCursorStatus(stdout: string, code = 0): CursorStatus {
   return { loggedIn: false };
 }
 
-// `agent models` prints one line per model: "<id> - <name> (current, default)".
-// Colours are stripped. Also accepts a JSON list ({ models } or an array of
-// { modelId, name }), which is what an ACP session/new `models` field holds.
-// The text shape is from this build's models command; it was not run here
-// (it exits asking for a login).
+// The CLI's stand-in for "whatever you have selected" shows up as `default`
+// or `default[]` on an ACP session. The models command calls that same
+// choice `auto` ("Auto"). One id, so the menu doesn't read "default[]".
+export function canonicalCursorModel(id: string): string {
+  const bare = id.trim();
+  if (!bare || /^default(?:\[[^\]]*\])?$/i.test(bare)) return 'auto';
+  return bare;
+}
+
+export function cursorModelTitle(id: string, title?: string): string {
+  const canon = canonicalCursorModel(id);
+  const named = title?.trim();
+  if (canon === 'auto' && (!named || named === id || /^default(?:\[[^\]]*\])?$/i.test(named) || /^auto$/i.test(named))) return 'Auto';
+  return named || canon;
+}
+
+// `agent models` prints one line per model: "<id> - <name> (current, default)",
+// under an "Available models" header, then a "Tip:" line. Colours and a
+// leading tick are stripped. Also accepts the JSON list an ACP session/new
+// `models` field holds ({ modelId, name } or { id, name }).
 export function parseCursorModels(stdout: string): { models: ModelChoice[]; defaultModel?: string } {
-  const text = stdout.replace(ANSI, '').trim();
+  const text = stripCliText(stdout).trim();
   if (!text) return { models: [] };
   if (text.startsWith('{') || text.startsWith('[')) {
     try {
@@ -92,15 +111,19 @@ export function parseCursorModels(stdout: string): { models: ModelChoice[]; defa
   const models: ModelChoice[] = [];
   let defaultModel: string | undefined;
   for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
+    const line = raw.replace(/^[\s*•✓✔\-–—]+/, '').trim();
     if (!line || /^available models$/i.test(line) || /^tip:/i.test(line) || /^no models/i.test(line)) continue;
-    const m = /^(\S+)(?:\s+-\s+(.*?))?(?:\s+\(([^)]*)\))?$/.exec(line);
-    if (!m) continue;
-    const id = m[1];
-    if (!id || id.startsWith('-')) continue;
-    const title = (m[2] ?? '').trim() || id;
+    const split = line.split(/\s+[-–—]\s+/);
+    const idPart = split[0]?.trim() ?? '';
+    if (!idPart || /\s/.test(idPart)) continue;
+    const rest = split.slice(1).join(' - ').trim();
+    const flagged = /^(.*?)(?:\s+\(([^)]*)\))?$/.exec(rest);
+    const title = cursorModelTitle(idPart, (flagged?.[1] ?? '').trim() || undefined);
+    const id = canonicalCursorModel(idPart);
+    if (models.some((m) => m.id === id)) continue;
     models.push({ id, model: id, title });
-    const flags = m[3] ?? '';
+    const flags = flagged?.[2] ?? '';
+    if (/\bdefault\b/i.test(flags) || id === 'auto') defaultModel = defaultModel ?? id;
     if (/\bdefault\b/i.test(flags)) defaultModel = id;
   }
   return { models, ...(defaultModel ? { defaultModel } : {}) };
@@ -117,19 +140,22 @@ function modelsFromJson(value: unknown): { models: ModelChoice[]; defaultModel?:
         : Array.isArray(root.availableModels)
           ? root.availableModels
           : [];
-  const current =
+  const currentRaw =
     typeof (root.models as { currentModelId?: unknown } | undefined)?.currentModelId === 'string'
       ? (root.models as { currentModelId: string }).currentModelId
       : typeof root.currentModelId === 'string'
         ? root.currentModelId
         : undefined;
+  const current = currentRaw ? canonicalCursorModel(currentRaw) : undefined;
   const models: ModelChoice[] = [];
   for (const row of list) {
     if (!row || typeof row !== 'object') continue;
     const r = row as Record<string, unknown>;
-    const id = stringOf(r.modelId) || stringOf(r.id) || stringOf(r.displayModelId);
-    if (!id) continue;
-    const title = stringOf(r.name) || stringOf(r.displayName) || id;
+    const rawId = stringOf(r.modelId) || stringOf(r.id) || stringOf(r.displayModelId) || stringOf(r.value);
+    if (!rawId) continue;
+    const id = canonicalCursorModel(rawId);
+    if (models.some((m) => m.id === id)) continue;
+    const title = cursorModelTitle(id, stringOf(r.name) || stringOf(r.displayName) || stringOf(r.title));
     models.push({ id, model: id, title });
   }
   return { models, ...(current ? { defaultModel: current } : {}) };
@@ -177,8 +203,10 @@ export async function cursorStatus(bin: string): Promise<CursorStatus> {
 
 export async function cursorModels(bin: string): Promise<{ models: ModelChoice[]; defaultModel?: string }> {
   const listed = await runCursor(bin, ['models'], 30_000);
-  const fromCommand = parseCursorModels(listed.code === 0 ? listed.stdout : '');
+  // A login prints the list on stdout. Some failures still print it and
+  // exit non-zero; either stream counts when it has model lines.
+  const fromCommand = parseCursorModels(`${listed.stdout}\n${listed.stderr}`);
   if (fromCommand.models.length) return fromCommand;
   const flag = await runCursor(bin, ['--list-models'], 30_000);
-  return parseCursorModels(flag.code === 0 ? flag.stdout : '');
+  return parseCursorModels(`${flag.stdout}\n${flag.stderr}`);
 }

@@ -465,8 +465,8 @@ type ProjectIcon = {
 // What the librarian (see Projects) is doing, has done and will do next.
 type LibrarianStatus = {
   state: "idle" | "working" | "paused" | "off"
-  reason?: string       // state "off": why ("Needs a Claude pool to run
-                        // on", "Every login in Claude is out of room",
+  reason?: string       // state "off": why ("Needs a Claude or Cursor pool
+                        // to run on", "Every login in Claude is out of room",
                         // "Model calls are off")
   paused: boolean       // Mike paused it; looks wait in the queue
   current?: LibrarianJob & { startedAt: string } // the look under way
@@ -1418,10 +1418,11 @@ it's a person's click in System Settings.
 The runner makes small model calls of its own (classify, extract,
 summarise, generate) for features like titles, the librarian and "wake
 when" (`src/models/`). Features ask for a job, not a model: `ROUTES` says
-which model answers it, Haiku for everything but `decide`, which is Opus.
-Every call runs on the official `claude` CLI on one of the Claude logins
-in the pool `models.pool` names: the same CLI and logins as threads, so
-it needs no key and costs nothing beyond the login's usage.
+which model answers it, Haiku for everything but `decide`, which is Opus,
+when the pool's login is Claude. A Cursor login uses a fast model from
+`agent models` (or `models.cursorModel` in runner.json). Every call runs
+on that login's own CLI, the same one threads use, so it needs no key
+and costs nothing beyond the login's usage.
 
 There used to be OpenRouter as well, with a key, a daily budget and a
 spend to show. It went on 29 Oct 2026: every feature is Haiku or Opus,
@@ -1430,18 +1431,25 @@ older runner's `openRouterKey`, `dailyBudgetUsd`, `spentTodayUsd` and
 `spentMonthUsd` in `Settings.models` are ignored by clients, and
 `secrets/openrouter-key`, if there is one, is no longer read.
 
-- **Consent.** A call sends thread text to Anthropic on Mike's own login,
-  as the thread itself does.
+- **Consent.** A call sends thread text to that login's provider, the
+  same way the thread itself does.
 - **The pool.** `models.pool` in `runner.json` is a pool id, `"claude"`
   when it isn't set, or `null` for none, which turns titles and the
-  librarian off. Only its Claude logins are used. A call runs on the one
+  librarian off. Claude and Cursor logins in that pool are used. When
+  the pool is still `"claude"` and that pool has no Claude login, but
+  the Cursor pool does, small jobs run on Cursor. `models.cursorModel`
+  names the Cursor model; otherwise a fast or low one from that login's
+  list is used, then Composer, then Auto. A call runs on the one
   it ran on last while that's OK to run on (see Pools), else the one with
-  the most room. The CLI runs as `claude -p` at low effort in an empty
-  folder (`models/cli` in the data dir), with no tools, MCP servers,
-  settings, hooks, CLAUDE.md, skills or saved session (`--tools ""
-  --strict-mcp-config --setting-sources "" --disable-slash-commands
-  --no-session-persistence`), the job's own system prompt, and
-  `--json-schema` for classify and extract. A login that answers that
+  the most room. On a Claude login the CLI runs as `claude -p` at low
+  effort in an empty folder (`models/cli` in the data dir), with no
+  tools, MCP servers, settings, hooks, CLAUDE.md, skills or saved
+  session (`--tools "" --strict-mcp-config --setting-sources ""
+  --disable-slash-commands --no-session-persistence`), the job's own
+  system prompt, and `--json-schema` for classify and extract. On a
+  Cursor login it runs as `agent -p --trust --mode ask --output-format
+  text --model <id>` in that same folder, and the schema is written
+  into the prompt. A login that answers that
   it's out of room counts as run dry, as it does for a turn, and the next
   one is tried. At most 2 calls run at once, and each times out after 60
   seconds.
@@ -3750,10 +3758,11 @@ and also when a move or an ask leaves it out. That isn't remembered as a
 no the way Mike's is: a later look can put it back. Looks are listed in
 `LibrarianStatus.recent`.
 
-Looks (and icon picks) run on the Claude pool, like every small job.
-Without a pool with a Claude login (`models.pool` null, or a pool with
-none), or while every login in it is out of room, the queue waits
-(`state: "off"`) and tries again later.
+Looks (and icon picks) run on the small-jobs pool, like every other
+small job: a Claude login, or a Cursor one when that is what is signed
+in. Without a pool that has one of those (`models.pool` null, or a pool
+with neither), or while every login in it is out of room, the queue
+waits (`state: "off"`) and tries again later.
 
 **Titles.** A look also says whether the thread's title still fits, and
 gives a new one when the work has moved on or the title is only its first

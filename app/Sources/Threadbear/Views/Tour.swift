@@ -169,7 +169,7 @@ final class Tour {
                             body: "Projects group threads by what they're for, with goals and where each is up to.",
                             doc: "projects"),
         .librarian: TourStep(targets: [.mainPanel], title: "The librarian",
-                             body: "The librarian uses Haiku on your Claude login to file threads into projects.",
+                             body: "The librarian uses a small, fast model on your login to file threads into projects.",
                              doc: "librarian"),
         .usage: TourStep(targets: [.panel("usage")], title: "Usage",
                          body: "How much room each of your logins has left before it hits its limits.",

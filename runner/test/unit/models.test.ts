@@ -213,7 +213,7 @@ test('models.run: refuses bad params and says why a call was not sent', async ()
   await assert.rejects(async () => s.methods['models.run']({ job: 'dance', text: 'x' }), (e: RpcError) => e.code === ErrorCode.badParams);
   const r = await s.methods['models.run']({ job: 'generate', text: 'x' });
   assert.deepEqual((r as any).reason, 'no-pool');
-  assert.equal(s.models.unavailable(), 'Needs a Claude pool to run on');
+  assert.equal(s.models.unavailable(), 'Needs a Claude or Cursor pool to run on');
 });
 
 // --------------------------------------------------------------- titles

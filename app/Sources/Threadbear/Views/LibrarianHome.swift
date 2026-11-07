@@ -37,12 +37,12 @@ private struct LibrarianAbout: View {
         }
     }
 
-    static let more = "It files each thread in a project, writes down where the project's up to, and renames threads that have wandered off from their title. It takes a look after a thread's first message and when a turn ends, then catches up at most every 20 minutes while the thread keeps going. A catch-up after only a quick reply is skipped without asking the model. Each look is one short call to Haiku, not the model your threads use, on the Claude login with the most room in the Runs on pool, and counts towards its usage. It waits when they're all out of room, and threads in a private folder are never sent. A thread you take out of a project is never put back in it."
+    static let more = "It files each thread in a project, writes down where the project's up to, and renames threads that have wandered off from their title. It takes a look after a thread's first message and when a turn ends, then catches up at most every 20 minutes while the thread keeps going. A catch-up after only a quick reply is skipped without asking the model. Each look is one short call on a small, fast model, not the model your threads use, on the login with the most room in the Runs on pool, and counts towards its usage. On a Claude login that model is Haiku. On a Cursor login it is a fast model from that login. It waits when they're all out of room, and threads in a private folder are never sent. A thread you take out of a project is never put back in it."
 }
 
 /// What can be changed about the librarian, here rather than only in
-/// Settings: whether it's looking at all, and which pool's Claude logins
-/// it runs on. The pool is the runner's small-jobs setting, which titles
+/// Settings: whether it's looking at all, and which pool's logins it
+/// runs on. The pool is the runner's small-jobs setting, which titles
 /// share, so a change here shows in Settings › Models too.
 private struct LibrarianSettings: View {
     @Environment(AppModel.self) private var app
@@ -66,23 +66,26 @@ private struct LibrarianSettings: View {
                     GridRow {
                         Text("Runs on")
                             .foregroundStyle(.secondary)
-                        Picker("Runs on", selection: Binding(get: { settings.models.pool }, set: { app.updateSettings(SettingsUpdate(pool: .some($0))) })) {
+                        Picker("Runs on", selection: Binding(
+                            get: { SmallJobs.shownPool(stored: settings.models.pool, pools: app.claudePools) },
+                            set: { app.updateSettings(SettingsUpdate(pool: .some($0))) }
+                        )) {
                             ForEach(app.claudePools) { pool in
                                 Label(pool.title, systemImage: Pools.symbol(pool, accounts: app.accounts)).labelStyle(.titleAndIcon).tag(Optional(pool.id))
                             }
                             // What's set but can't take a look: None (from
                             // Settings), or a pool deleted since or with no
-                            // Claude login. Shown so the picker still says
-                            // what's set; not offered.
-                            if let id = settings.models.pool, !app.claudePools.contains(where: { $0.id == id }) {
-                                Label("\(id), which has no Claude login", systemImage: "exclamationmark.triangle").labelStyle(.titleAndIcon).tag(Optional(id))
+                            // login that can run a small job. Shown so the
+                            // picker still says what's set; not offered.
+                            if let id = settings.models.pool, SmallJobs.shownPool(stored: id, pools: app.claudePools) == id, !app.claudePools.contains(where: { $0.id == id }) {
+                                Label("\(id), which has no login for small jobs", systemImage: "exclamationmark.triangle").labelStyle(.titleAndIcon).tag(Optional(id))
                             } else if settings.models.pool == nil {
                                 Label("No pool", systemImage: "nosign").labelStyle(.titleAndIcon).tag(String?.none)
                             }
                         }
                         .labelsHidden()
                         .fixedSize()
-                        .tip("Which pool's Claude logins it uses, the one with the most room. It waits when they're all out of room. Titles use the same pool (Settings › Models)")
+                        .tip("Which pool's logins it uses, the one with the most room. It waits when they're all out of room. Titles use the same pool (Settings › Models)")
                     }
                 }
             }
