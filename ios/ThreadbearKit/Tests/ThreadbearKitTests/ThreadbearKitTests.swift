@@ -561,9 +561,14 @@ struct FailingTransport: ConvexTransport {
     @Test func fakeLoadEarlierPrependsOlderMessages() async throws {
         let backend = FakeBackend(turnDelay: .milliseconds(20))
         _ = try await backend.loadEarlier(threadId: "a3", beforeSeq: 120)
-        try await Task.sleep(for: .milliseconds(100))
-        var iterator = backend.thread("a3").makeAsyncIterator()
-        let detail = try #require(try await iterator.next() ?? nil)
+        var found: ThreadDetail?
+        for _ in 0..<100 {
+            var iterator = backend.thread("a3").makeAsyncIterator()
+            found = try await iterator.next() ?? nil
+            if found?.messages.first?.seq == 70 { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let detail = try #require(found)
         #expect(detail.messages.first?.seq == 70)
         #expect(detail.messages.map(\.seq) == detail.messages.map(\.seq).sorted())
         #expect(detail.thread.hasEarlier(than: detail.messages.first?.seq))
