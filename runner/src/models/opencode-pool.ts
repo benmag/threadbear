@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import type { ModelChoice } from '../protocol.ts';
 import type { CliResponse } from './claude-pool.ts';
+import { stripModelSuffix } from '../accounts.ts';
 
 export type OpenCodeCall = {
   bin: string;
@@ -24,8 +25,12 @@ export function openCodePrompt(system: string | undefined, user: string, jsonSch
   return [head, schema, user].filter(Boolean).join('\n\n');
 }
 
+export function openCodeCliModelId(id: string): string {
+  return stripModelSuffix(id.trim());
+}
+
 export function pickOpenCodeSmallModel(models: ModelChoice[], chosen?: string): string {
-  if (chosen?.trim()) return chosen.trim();
+  if (chosen?.trim()) return openCodeCliModelId(chosen);
   const rows = models.length ? models : [{ id: 'opencode/beam-free', model: 'opencode/beam-free', title: 'Beam Free' }];
   const score = (m: ModelChoice) => {
     const s = `${m.id} ${m.title}`.toLowerCase();
@@ -53,7 +58,7 @@ export function askOpenCode(req: OpenCodeCall): Promise<CliResponse> {
     const prompt = openCodePrompt(req.system, req.user, req.jsonSchema);
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(req.bin, ['run', '-m', req.model, '--format', 'text', prompt], { cwd: req.cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+      child = spawn(req.bin, ['run', '-m', openCodeCliModelId(req.model), '--format', 'text', prompt], { cwd: req.cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     } catch (e) {
       resolve({ ok: false, timedOut: false, limit: false, message: `Couldn't start OpenCode: ${(e as Error).message}` });
       return;

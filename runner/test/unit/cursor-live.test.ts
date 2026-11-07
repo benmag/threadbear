@@ -8,7 +8,7 @@ import { CursorNormalizer, cursorToolIdentity, usageFrom } from '../../src/adapt
 import { fileContext } from '../../src/adapters/context.ts';
 import type { AdapterOutput } from '../../src/adapters/types.ts';
 import { missingCliBanner } from '../../src/runner.ts';
-import { pickCursorSmallModel, cursorCallArgs, cursorPrompt } from '../../src/models/cursor-pool.ts';
+import { pickCursorSmallModel, cursorCallArgs, cursorPrompt, cursorCliModelId } from '../../src/models/cursor-pool.ts';
 import { tmpDir } from '../helpers/fakes.ts';
 
 const SAMPLE = `
@@ -79,6 +79,13 @@ test('a small job picks a fast Cursor model, and runner.json can name one', () =
   assert.equal(pickCursorSmallModel(models), 'composer-2.5-fast');
   assert.equal(pickCursorSmallModel(models, 'composer-2.5'), 'composer-2.5');
   assert.equal(pickCursorSmallModel([]), 'auto');
+  const claudeOnly = [
+    { id: 'claude-haiku-5-5-high', model: 'claude-haiku-5-5-high', title: 'Claude Haiku 5.5' },
+    { id: 'claude-opus-5-thinking-high', model: 'claude-opus-5-thinking-high', title: 'Claude Opus' },
+  ];
+  assert.equal(pickCursorSmallModel(claudeOnly), 'auto');
+  assert.equal(cursorCliModelId('claude-haiku-4-5[thinking=true]'), 'auto');
+  assert.equal(cursorCliModelId('composer-2.5-fast[thinking=true]'), 'composer-2.5-fast');
   assert.deepEqual(cursorCallArgs('auto', 'Name it'), ['-p', '--trust', '--mode', 'ask', '--output-format', 'text', '--model', 'auto', 'Name it']);
   assert.match(cursorPrompt('Say a title', 'the thread', { type: 'object' }), /JSON only/);
 });
