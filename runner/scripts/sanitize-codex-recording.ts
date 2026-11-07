@@ -173,9 +173,17 @@ export function leaks(text: string, secrets: string[] = [], local = localNames()
   const marker = /(?:\.\.\.|…)\s*[[<]\d+ chars[\]>]/.exec(text);
   if (marker) found.push(`a truncation marker (${marker[0]})`);
   for (const s of secrets) if (text.includes(s)) found.push(`a dropped private value (${s.slice(0, 4)}…)`);
-  // As a whole name, not inside a word: a login called "vision" isn't in "revision".
+  // The name only where it would identify this machine: a /Users/<name> or
+  // /home/<name> segment, a hostname (name.local, .localdomain or .lan), or
+  // a JSON string equal to it. Not a JSON key ("server":), not part of a
+  // field (serverName, server_name), and "vision" isn't in "revision".
   for (const n of local) {
-    if (n && new RegExp(`(?<![a-z0-9])${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9])`, 'i').test(text)) found.push(`this Mac's user or host name (${n})`);
+    if (!n) continue;
+    const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const segment = new RegExp(`/(?:Users|home)/${esc}(?![A-Za-z0-9._-])`, 'i');
+    const quoted = new RegExp(`(?<=[:,\\[])\\s*"${esc}"(?!\\s*:)`, 'i');
+    const host = new RegExp(`(?<![A-Za-z0-9_-])${esc}\\.(?:localdomain|local|lan)\\b`, 'i');
+    if (segment.test(text) || quoted.test(text) || host.test(text)) found.push(`this Mac's user or host name (${n})`);
   }
   const b64 = /[A-Za-z0-9+/]{1500,}={0,2}/g;
   for (const m of text.matchAll(b64)) if (!TINY_PNG_B64.includes(m[0]) && !m[0].includes(TINY_PNG_B64)) found.push(`a long base64 string (${m[0].length} chars)`);

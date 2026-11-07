@@ -680,6 +680,9 @@ test('the sanitiser rewrites temp folders, swaps base64, drops the account id, a
   assert.ok(leaks('{"host":"Bobs-Mac"}', [], ['bobs-mac']).length);
   assert.ok(leaks('{"x":"/home/vision/a"}', [], ['vision']).length);
   assert.deepEqual(leaks('{"revision":"r1"}', [], ['vision']), []);
+  assert.deepEqual(leaks('{"server":"computer-use"}', [], ['server']), []);
+  assert.deepEqual(leaks('handshaking with MCP server failed', [], ['server']), []);
+  assert.ok(leaks('/Users/server/x', [], ['server']).includes("this Mac's user or host name (server)"));
 });
 
 test('the committed Codex fixtures hold nothing private', () => {
