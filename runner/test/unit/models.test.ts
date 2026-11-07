@@ -12,7 +12,7 @@ import { makeHarness, tick, tmpDir, testConfig } from '../helpers/fakes.ts';
 import { FakeClock } from '../../src/clock.ts';
 import { ensureHome, loadConfig, readToken } from '../../src/config.ts';
 import { nullLogger } from '../../src/log.ts';
-import { HAIKU, Models, isPrivate } from '../../src/models/index.ts';
+import { HAIKU, Models, isPrivate, poolCallTimeoutMs, CURSOR_POOL_TIMEOUT_MS, OPENCODE_POOL_TIMEOUT_MS, POOL_TIMEOUT_MS } from '../../src/models/index.ts';
 import type { ModelSettings } from '../../src/models/index.ts';
 import type { CliRequest, CliResponse } from '../../src/models/claude-pool.ts';
 import { ledgerPath } from '../../src/models/ledger.ts';
@@ -409,4 +409,13 @@ test('explain: asks the small model about the selection, and writes nothing to t
   // No model: the reason comes back as an error.
   reply = { ok: false, reason: 'private', message: 'This thread is in a private folder.' };
   await assert.rejects(h.runner.explain({ threadId: thread.id, selection: 'x' }), (e: any) => e instanceof RpcError && e.message === 'This thread is in a private folder.');
+});
+
+test('small-job CLI timeouts differ by provider and can be overridden', () => {
+  const base: ModelSettings = { privateFolders: [] };
+  assert.equal(poolCallTimeoutMs('claude', base), POOL_TIMEOUT_MS);
+  assert.equal(poolCallTimeoutMs('cursor', base), CURSOR_POOL_TIMEOUT_MS);
+  assert.equal(poolCallTimeoutMs('opencode', base), OPENCODE_POOL_TIMEOUT_MS);
+  assert.equal(poolCallTimeoutMs('cursor', { ...base, poolTimeoutMs: 90_000 }), 90_000);
+  assert.equal(poolCallTimeoutMs('cursor', { ...base, poolTimeoutMs: 90_000 }, 120_000), 120_000);
 });

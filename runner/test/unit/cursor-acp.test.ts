@@ -59,8 +59,9 @@ function onLine(fake: FakeAcp, msg: Msg): void {
   if (msg.method === 'initialize') reply(fake, msg.id, HANDSHAKE);
   else if (msg.method === 'authenticate') reply(fake, msg.id, {});
   else if (msg.method === 'session/new' || msg.method === 'session/load') {
+    const omitId = msg.method === 'session/load' && msg.params?.sessionId === 'chat-kept-no-echo';
     reply(fake, msg.id, {
-      sessionId: 'chat-1',
+      ...(omitId ? {} : { sessionId: 'chat-1' }),
       modes: { currentModeId: 'agent', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }, { id: 'ask', name: 'Ask' }] },
       models: { currentModelId: 'composer-2', availableModels: [{ modelId: 'composer-2', name: 'Composer 2' }, { modelId: 'gpt-5', name: 'GPT-5' }] },
       configOptions: [{ id: 'mode', name: 'Mode', currentValue: 'agent' }],
@@ -206,6 +207,25 @@ test('ask mode shows an approval card and resume loads the session', async () =>
   assert.ok(fake.lines.some((m) => m.method === 'session/cancel'));
   session.kill();
   void decision;
+});
+
+test('resume keeps the client session id when load omits sessionId', async () => {
+  const root = tmpDir('tb-cursor-acp-');
+  const { proc, fake } = fakeProcess();
+  const outs: { kind: string; nativeSessionId?: string }[] = [];
+  const sink: SessionSink = {
+    output: (o) => outs.push(o as { kind: string }),
+    requestApproval: async () => ({ decision: 'allow' }),
+    requestQuestion: async () => ({ answers: null }),
+    exited: () => {},
+  };
+  const adapter = new CursorAdapter({ binary: () => '/bin/agent', spawn: () => proc, version: async () => '2026.11.05', toolsFor: () => [] });
+  const session = adapter.start(opts(root, { resume: true, sessionId: 'chat-kept-no-echo' }), sink);
+  await waitForLines(fake, (lines) => lines.some((m) => m.method === 'session/load'));
+  await waitFor(outs, (o) => o.kind === 'session');
+  const sessionOut = outs.find((o) => o.kind === 'session');
+  assert.equal(sessionOut?.nativeSessionId, 'chat-kept-no-echo');
+  session.kill();
 });
 
 test('threadbear MCP lists end_turn on the HTTP url the CLI posts to', async () => {

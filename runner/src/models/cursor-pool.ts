@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import type { ModelChoice } from '../protocol.ts';
 import type { CliResponse } from './claude-pool.ts';
+import { stripModelSuffix } from '../accounts.ts';
 
 export type CursorCall = {
   bin: string;
@@ -22,8 +23,22 @@ export type CursorCall = {
 
 const LIMIT = /usage limit|rate limit/i;
 
+// Claude ids in Cursor's model list are for ACP turns, not agent -p.
+function isClaudeCliModel(id: string): boolean {
+  const bare = stripModelSuffix(id).toLowerCase();
+  return ['opus', 'sonnet', 'haiku', 'default', 'opusplan'].includes(bare) || bare.startsWith('claude-');
+}
+
+/** Model id the headless `agent -p` CLI accepts (no [thinking] suffix, no Claude alias). */
+export function cursorCliModelId(id: string): string {
+  const bare = stripModelSuffix(id.trim());
+  if (!bare || bare === 'auto') return 'auto';
+  if (isClaudeCliModel(bare)) return 'auto';
+  return bare;
+}
+
 export function cursorCallArgs(model: string, prompt: string): string[] {
-  return ['-p', '--trust', '--mode', 'ask', '--output-format', 'text', '--model', model, prompt];
+  return ['-p', '--trust', '--mode', 'ask', '--output-format', 'text', '--model', cursorCliModelId(model), prompt];
 }
 
 export function cursorPrompt(system: string | undefined, user: string, jsonSchema?: Record<string, unknown>): string {
@@ -32,21 +47,23 @@ export function cursorPrompt(system: string | undefined, user: string, jsonSchem
   return [head, schema, user].filter(Boolean).join('\n\n');
 }
 
-// A fast model from `agent models`: one whose id or title says fast, flash,
-// mini or haiku, else Composer, else Auto. Opus, Codex and thinking models
-// are last. `chosen` (runner.json models.cursorModel) wins when set.
+// A fast Cursor-native model from `agent models`: fast/flash/mini in the
+// id or title, else Composer, else Auto. Claude aliases in the list are
+// skipped (they are not valid for agent -p). `models.cursorModel` wins when set.
 export function pickCursorSmallModel(models: ModelChoice[], chosen?: string): string {
-  if (chosen?.trim()) return chosen.trim();
-  const rows = models.length ? models : [{ id: 'auto', model: 'auto', title: 'Auto' }];
+  if (chosen?.trim()) return cursorCliModelId(chosen);
+  const native = models.filter((m) => !isClaudeCliModel(m.id) && !isClaudeCliModel(m.model));
+  const rows = native.length ? native : [{ id: 'auto', model: 'auto', title: 'Auto' }];
   const score = (m: ModelChoice) => {
     const s = `${m.id} ${m.title}`.toLowerCase();
-    if (/fast|flash|mini|haiku/.test(s)) return 0;
+    if (m.id === 'auto' || m.model === 'auto') return 100;
+    if (/-low-fast|-fast\b|\bfast\b|flash|mini/.test(s)) return 0;
     if (/composer/.test(s)) return 1;
-    if (m.id === 'auto') return 2;
-    if (/opus|thinking|codex|gpt-/.test(s)) return 9;
+    if (/gpt-/.test(s)) return 3;
+    if (/opus|thinking|codex/.test(s)) return 9;
     return 5;
   };
-  return [...rows].sort((a, b) => score(a) - score(b) || a.id.localeCompare(b.id))[0]!.id;
+  return cursorCliModelId([...rows].sort((a, b) => score(a) - score(b) || a.id.localeCompare(b.id))[0]!.id);
 }
 
 export function readCursorReply(stdout: string, stderr: string, code: number | null): CliResponse {

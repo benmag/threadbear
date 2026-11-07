@@ -16,6 +16,7 @@ import { fileContext } from '../context.ts';
 import type { AgentAdapter, AgentSession, SessionSink, StartSessionOptions, ToolApprovalAnswer, UserInput } from '../types.ts';
 import { SessionNotFoundError } from '../types.ts';
 import { AcpConnection, AcpError, type AcpProcess } from './acp.ts';
+import { openAcpSession } from '../acp/session.ts';
 import { canonicalCursorModel, cursorModels, cursorStatus, cursorVersion, findCursorBinary, parseCursorModels } from './cli.ts';
 import { ThreadbearMcp } from './mcp-http.ts';
 import { CursorNormalizer, commandsOf, effortNote } from './normalize.ts';
@@ -215,34 +216,29 @@ class CursorSession implements AgentSession {
       throw authError(e);
     }
     const mcpServers = this.mcp ? [this.mcp.endpoint] : [];
-    const created = this.opts.resume
-      ? await this.load(mcpServers)
-      : ((await this.conn.request('session/new', { cwd: this.opts.cwd, mcpServers }, 60_000)) as Any);
-    const sessionId = typeof created?.sessionId === 'string' ? created.sessionId : '';
-    if (!sessionId) throw new Error('Cursor did not return a session id.');
-    this.sessionId = sessionId;
+    const loadSession = (init as Any)?.agentCapabilities?.loadSession === true;
+    const opened = await openAcpSession(this.conn, {
+      resume: this.opts.resume,
+      sessionId: this.opts.sessionId,
+      cwd: this.opts.cwd,
+      mcpServers,
+      loadSession,
+      agentLabel: 'Cursor',
+    });
+    const created = opened.created;
+    this.sessionId = opened.sessionId;
     const listed = modelsOf(created);
     if (listed.models.length) this.learnModels(listed);
     const picked = this.model || listed.defaultModel || currentModel(created);
     const model = picked ? canonicalCursorModel(picked) : '';
     this.sink.output({
       kind: 'session',
-      nativeSessionId: sessionId,
+      nativeSessionId: this.sessionId,
       ...(model ? { model } : {}),
       ...(listed.models.length ? { models: listed.models } : {}),
     });
     await this.applySettings(created);
     this.readyOk = true;
-  }
-
-  private async load(mcpServers: unknown[]): Promise<Any> {
-    try {
-      return (await this.conn!.request('session/load', { sessionId: this.opts.sessionId, cwd: this.opts.cwd, mcpServers }, 60_000)) as Any;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      if (/not found|no such session|unknown session|does not exist/i.test(message)) throw new SessionNotFoundError(message);
-      throw e;
-    }
   }
 
   private async applySettings(created: Any): Promise<void> {
