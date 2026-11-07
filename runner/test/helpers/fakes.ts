@@ -171,7 +171,7 @@ export function testConfig(home: string, extra: Partial<Config> = {}): Config {
     codexArgs: [],
     codexMainDir: path.join(home, 'no-codex-main'),
     tokenStatsLimitsFile: path.join(home, 'no-limits.json'),
-    cliUpdates: { claude: 'off', codex: 'off', cursor: 'off', checkMinutes: 60, keepCodexVersions: 2 },
+    cliUpdates: { claude: 'off', codex: 'off', cursor: 'off', opencode: 'off', checkMinutes: 60, keepCodexVersions: 2 },
     accountNotes: {},
     followMain: false,
     bulletReplies: true,
