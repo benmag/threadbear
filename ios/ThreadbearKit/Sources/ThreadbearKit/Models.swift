@@ -848,6 +848,10 @@ public enum BackendCompatibility {
     /// taken yet, and phone:cancel takes one back. Older backends have
     /// neither, so the phone only shows a line for the last one it sent.
     public static let waitingSendsAPIVersion = 57
+/// From 61 phone:update takes a `model` (or null for the runner's own
+/// default), so the composer's picker can change an open thread's model.
+/// Older backends reject it, so the phone shows no picker.
+public static let modelChangeAPIVersion = 61
 
     /// The line to show, or nil when the backend is fine.
     public static func problem(_ identity: PhoneIdentity) -> String? {
@@ -918,20 +922,24 @@ public enum ThreadChange: Sendable, Hashable {
     case archiveWithVerdict(ArchiveVerdict)
     case unarchive
     case markSeen
-    case rename(String)
-    case star(Bool)
+case rename(String)
+case star(Bool)
+/// The thread's model (backend API 61): nil is the runner's own default,
+/// as the composer's picker's "Auto".
+case model(String?)
 
-    var json: JSONValue {
-        switch self {
-        case let .snooze(until): ["snooze": ["until": .string(ISODate.string(until))]]
-        case .snoozeUntilRestart: ["snooze": ["untilRestart": true]]
-        case .wake: ["wake": true]
-        case .archive: ["archive": true]
-        case let .archiveWithVerdict(verdict): ["archive": true, "verdict": .string(verdict.rawValue)]
-        case .unarchive: ["unarchive": true]
-        case .markSeen: ["markSeen": true]
-        case let .rename(title): ["title": .string(title)]
-        case let .star(on): ["star": .bool(on)]
-        }
-    }
+var json: JSONValue {
+switch self {
+case let .snooze(until): ["snooze": ["until": .string(ISODate.string(until))]]
+case .snoozeUntilRestart: ["snooze": ["untilRestart": true]]
+case .wake: ["wake": true]
+case .archive: ["archive": true]
+case let .archiveWithVerdict(verdict): ["archive": true, "verdict": .string(verdict.rawValue)]
+case .unarchive: ["unarchive": true]
+case .markSeen: ["markSeen": true]
+case let .rename(title): ["title": .string(title)]
+case let .star(on): ["star": .bool(on)]
+case let .model(model): ["model": JSONValue(model)]
+}
+}
 }

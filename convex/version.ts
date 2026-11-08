@@ -267,9 +267,13 @@
 //    command with { buttonId }. An older runner sends none and fails a press
 //    as unknown; an older phone shows the link as text.
 // 60: sync:sharedThreads, the ids of a runner's rows shared by link, which a
-//    runner checks against its own threads on every start and every hour,
-//    removing ones it deleted and rewriting ones it stopped sharing. And a
-//    runner key can't save a schedule under an id gone from another runner
-//    within the day (scheduleGone). An older runner never asks, and does
-//    as before.
-export const API_VERSION = 60;
+// runner checks against its own threads on every start and every hour,
+// removing ones it deleted and rewriting ones it stopped sharing. And a
+// runner key can't save a schedule under an id gone from another runner
+// within the day (scheduleGone). An older runner never asks, and does
+// as before.
+// 61: phone:update takes `model` (or null for the runner's own default),
+// the composer's model picker, so an open thread's model can be changed
+// from the phone. A phone sends it only to a backend of 61 or later; an
+// older runner fails it as "nothing to change".
+export const API_VERSION = 61;

@@ -234,9 +234,9 @@ struct ThreadView: View {
                 if quick.voiceThreadId == threadId, !typing {
                     VoiceBar(threadId: threadId, afterSeq: messages.last?.seq ?? 0, working: thread.isBusy) { typing = true }
                 } else {
-                    Composer(text: $draft, placeholder: composerPlaceholder(thread), links: thread.links ?? []) { text, photos in
-                        await send(text, photos: photos, to: thread)
-                    }
+            Composer(text: $draft, placeholder: composerPlaceholder(thread), thread: thread, onPickModel: { change(.model($0)) }) { text, photos in
+                await send(text, photos: photos, to: thread)
+            }
                 }
             }
         }
