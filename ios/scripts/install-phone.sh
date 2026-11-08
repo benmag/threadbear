@@ -13,7 +13,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 CONFIG=${CONFIG:-Release}
-DEVICE=${DEVICE:-00008130-001939C80483401C}   # 15 Pro Max
+DEVICE=${DEVICE:-D9ABE466-764B-5AA5-B42D-67ACBF71784E}   # Ben's iPhone
 DD=${DD:-/tmp/threadbear-dd-device}
 ASC_KEY_ID=${ASC_KEY_ID:-7SS6J9F98P}
 ASC_ISSUER_ID=${ASC_ISSUER_ID:-69a6de6f-a06e-47e3-e053-5b8c7c11a4d1}
@@ -45,4 +45,4 @@ xcodebuild -project Threadbear.xcodeproj -scheme Threadbear -configuration "$CON
 APP="$DD/Build/Products/$CONFIG-iphoneos/Threadbear.app"
 [[ "${BUILD_ONLY:-0}" == 1 ]] && { echo "Built $APP"; exit 0; }
 xcrun devicectl device install app --device "$DEVICE" "$APP"
-xcrun devicectl device process launch --device "$DEVICE" --terminate-existing com.mikecann.threadbear
+xcrun devicectl device process launch --device "$DEVICE" --terminate-existing com.lunarlabs.threadbear

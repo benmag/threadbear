@@ -6,7 +6,7 @@
 	<string>$(THREADBEAR_APS_ENVIRONMENT)</string>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.com.mikecann.threadbear</string>
+		<string>group.com.lunarlabs.threadbear</string>
 	</array>
 </dict>
 </plist>

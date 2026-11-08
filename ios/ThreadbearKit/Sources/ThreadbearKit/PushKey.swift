@@ -7,12 +7,12 @@ import Security
 /// own backend, which seals each notification's title and text with it. The
 /// relay forwards ciphertext; the app's notification extension opens it.
 /// Kept in the keychain under the App Group the extension shares
-/// (group.com.mikecann.threadbear, registered 28 Oct). Not a team-prefixed
+/// (group.com.lunarlabs.threadbear, registered 28 Oct). Not a team-prefixed
 /// keychain group: with automatic signing the extension got the team's
 /// wildcard profile, whose App ID prefix differs from the app's, so the two
 /// could never share one. An App Group doesn't depend on the prefix.
 public enum PushKeyStore {
-    public static let accessGroup = "group.com.mikecann.threadbear"
+    public static let accessGroup = "group.com.lunarlabs.threadbear"
     static let service = "com.mikecann.threadbear.pushKey"
     static let account = "pushKey"
 

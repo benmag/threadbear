@@ -43,7 +43,7 @@ enum PushKeyReader {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "com.mikecann.threadbear.pushKey",
             kSecAttrAccount as String: "pushKey",
-            kSecAttrAccessGroup as String: "group.com.mikecann.threadbear",
+            kSecAttrAccessGroup as String: "group.com.lunarlabs.threadbear",
             kSecReturnData as String: true,
         ]
         var out: AnyObject?
