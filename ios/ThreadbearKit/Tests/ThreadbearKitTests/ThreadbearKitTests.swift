@@ -455,15 +455,13 @@ import UniformTypeIdentifiers
     @Test func sendRunsATurnAndReplies() async throws {
         let backend = FakeBackend(turnDelay: .milliseconds(10))
         _ = try await backend.send(threadId: "a3", text: "thanks")
-        // Wait for the reply rather than a fixed time: a loaded machine is slower than 100 ms.
-        var found: ThreadDetail?
-        for _ in 0..<100 {
-            var iterator = backend.thread("a3").makeAsyncIterator()
-            found = try await iterator.next() ?? nil
-            if found?.thread.status == .idle { break }
-            try await Task.sleep(for: .milliseconds(50))
+        try await eventually {
+            var it = backend.thread("a3").makeAsyncIterator()
+            guard let d = try await it.next() ?? nil else { return false }
+            return d.messages.suffix(2).map(\.role) == [.user, .assistant] && d.thread.status == .idle
         }
-        let detail = try #require(found)
+        var iterator = backend.thread("a3").makeAsyncIterator()
+        let detail = try #require(try await iterator.next() ?? nil)
         #expect(detail.messages.suffix(2).map(\.role) == [.user, .assistant])
         #expect(detail.thread.status == .idle)
         #expect(detail.thread.unread)
@@ -475,7 +473,7 @@ import UniformTypeIdentifiers
     @Test func sampleDataHasNothingPersonal() throws {
         let sample = FakeBackend.sample(now: .now)
         let encoder = JSONEncoder()
-        let text = (String(decoding: try encoder.encode(sample.threads), as: UTF8.self)
+        let text = (String(decoding: try encoder.encode(sample.threads + FakeBackend.manyThreads(now: .now)), as: UTF8.self)
             + String(decoding: try encoder.encode(sample.messages), as: UTF8.self)
             + String(decoding: try encoder.encode(FakeBackend.sampleProjects), as: UTF8.self)).lowercased()
         for word in ["poddle", "walkies", "quick ask", "stash it", "cannvas", "bruce", "tinker", "backblaze",
@@ -561,14 +559,12 @@ struct FailingTransport: ConvexTransport {
     @Test func fakeLoadEarlierPrependsOlderMessages() async throws {
         let backend = FakeBackend(turnDelay: .milliseconds(20))
         _ = try await backend.loadEarlier(threadId: "a3", beforeSeq: 120)
-        var found: ThreadDetail?
-        for _ in 0..<100 {
-            var iterator = backend.thread("a3").makeAsyncIterator()
-            found = try await iterator.next() ?? nil
-            if found?.messages.first?.seq == 70 { break }
-            try await Task.sleep(for: .milliseconds(50))
+        try await eventually {
+            var it = backend.thread("a3").makeAsyncIterator()
+            return try await it.next()??.messages.first?.seq == 70
         }
-        let detail = try #require(found)
+        var iterator = backend.thread("a3").makeAsyncIterator()
+        let detail = try #require(try await iterator.next() ?? nil)
         #expect(detail.messages.first?.seq == 70)
         #expect(detail.messages.map(\.seq) == detail.messages.map(\.seq).sorted())
         #expect(detail.thread.hasEarlier(than: detail.messages.first?.seq))

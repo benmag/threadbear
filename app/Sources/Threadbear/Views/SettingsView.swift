@@ -16,12 +16,6 @@ struct SettingsView: View {
             GeneralSettings()
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .tag(SettingsTab.general)
-            // Only with the experiment on (VoiceMode.experiment).
-            if app.experiments.contains(VoiceMode.experiment) {
-                VoiceSettings()
-                    .tabItem { Label("Voice", systemImage: "waveform") }
-                    .tag(SettingsTab.voice)
-            }
             ModelSettings()
                 .tabItem { Label("Models", systemImage: "sparkles") }
                 .tag(SettingsTab.models)
