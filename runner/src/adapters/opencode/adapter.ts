@@ -18,6 +18,8 @@ import { AcpConnection, AcpError, type AcpProcess } from '../acp/connection.ts';
 import { openAcpSession } from '../acp/session.ts';
 import { findOpenCodeBinary, modelsFromSessionConfig, openCodeModels, openCodeStatus, openCodeVersion, parseOpenCodeModels } from './cli.ts';
 import { ThreadbearMcp } from '../acp/mcp-http.ts';
+import { OpenCodeEvents, freePort, type ChildPermission } from './events.ts';
+import crypto from 'node:crypto';
 import { CursorNormalizer, commandsOf, effortNote } from '../cursor/normalize.ts';
 import type { SlashCommand } from '../../slash-commands.ts';
 import type { ModelChoice } from '../../protocol.ts';
@@ -62,6 +64,8 @@ export type OpenCodeAdapterDeps = {
   status?: (bin: string) => Promise<{ loggedIn: boolean; email?: string }>;
   models?: (bin: string) => Promise<{ models: ModelChoice[]; defaultModel?: string }>;
   version?: (bin: string) => Promise<string | undefined>;
+  // Tests pass a fetch to turn on the HTTP event stream with a fake spawn.
+  eventsFetch?: typeof fetch;
 };
 
 export class OpenCodeAdapter implements AgentAdapter {
@@ -153,6 +157,9 @@ class OpenCodeSession implements AgentSession {
   private briefed = false;
   private slash: SlashCommand[] = [];
   private pendingPermissions = new Set<number | string>();
+  private events?: OpenCodeEvents;
+  private childPending = new Map<string, ChildPermission>();
+  private port?: number;
 
   constructor(opts: StartSessionOptions, sink: SessionSink, deps: OpenCodeAdapterDeps, learnModels: (listed: { models: ModelChoice[]; defaultModel?: string }) => void) {
     this.opts = opts;
@@ -182,8 +189,22 @@ class OpenCodeSession implements AgentSession {
         this.deps.log?.warn('threadbear MCP for OpenCode did not start', { error: String(e) });
       }
     }
-    const env = { ...process.env, ...this.opts.env };
-    const proc = (this.deps.spawn ?? defaultSpawn)(bin, ['acp'], { cwd: this.opts.cwd, env });
+    const env: NodeJS.ProcessEnv = { ...process.env, ...this.opts.env };
+    const args = ['acp'];
+    // The HTTP API next to ACP carries what ACP leaves out (helper sessions).
+    let password: string | undefined;
+    if (!this.deps.spawn || this.deps.eventsFetch) {
+      try {
+        this.port = this.deps.spawn ? 4096 : await freePort();
+        password = crypto.randomBytes(16).toString('hex');
+        env.OPENCODE_SERVER_PASSWORD = password;
+        args.push('--port', String(this.port), '--hostname', '127.0.0.1');
+      } catch (e) {
+        this.port = undefined;
+        this.deps.log?.warn('opencode events port unavailable', { error: String(e) });
+      }
+    }
+    const proc = (this.deps.spawn ?? defaultSpawn)(bin, args, { cwd: this.opts.cwd, env });
     this.proc = proc;
     if (!this.deps.spawn && proc.pid) this.deps.registry?.add(proc.pid, bin);
     this.conn = new AcpConnection(
@@ -238,6 +259,45 @@ class OpenCodeSession implements AgentSession {
     });
     await this.applySettings(created);
     this.readyOk = true;
+    if (this.port) {
+      this.events = new OpenCodeEvents({
+        port: this.port,
+        ...(password ? { password } : {}),
+        rootSessionId: () => this.sessionId,
+        onSubagent: (u) => this.sink.output({ kind: 'subagent', update: u }),
+        onPermission: (p) => void this.childPermission(p),
+        ...(this.deps.log ? { log: this.deps.log } : {}),
+        ...(this.deps.eventsFetch ? { fetch: this.deps.eventsFetch } : {}),
+      });
+      this.events.start();
+    }
+  }
+
+  // A helper's permission question: ACP never sends it, so the turn would
+  // wait on it with nothing shown. Same card and modes as the main session.
+  private async childPermission(p: ChildPermission): Promise<void> {
+    const events = this.events;
+    if (!events || this.childPending.has(p.id)) return;
+    if (this.mode === 'full') {
+      await events.reply(p.sessionId, p.id, 'once');
+      return;
+    }
+    this.childPending.set(p.id, p);
+    try {
+      const target = p.command ?? p.patterns.join(', ');
+      const answer = await this.sink.requestApproval({
+        ...(p.taskCallId ? { toolUseId: p.taskCallId } : {}),
+        name: p.permission,
+        title: `${p.description ? `${p.description}: ` : 'Helper: '}allow ${p.permission}${target ? ` (${target})` : ''}?`,
+        input: { permission: p.permission, patterns: p.patterns, ...(p.command ? { command: p.command } : {}) },
+        canAlwaysAllow: true,
+        signal: this.approvalAbort.signal,
+      });
+      const response = answer.decision === 'allow' ? 'once' : answer.decision === 'allowAlways' ? 'always' : 'reject';
+      await events.reply(p.sessionId, p.id, response);
+    } finally {
+      this.childPending.delete(p.id);
+    }
   }
 
   private async applySettings(created: Any): Promise<void> {
@@ -357,6 +417,12 @@ class OpenCodeSession implements AgentSession {
       }
     }
     this.pendingPermissions.clear();
+    if (this.events) {
+      // The abort signal above ends the helper cards; tell OpenCode too.
+      for (const p of this.childPending.values()) void this.events.reply(p.sessionId, p.id, 'reject');
+      this.childPending.clear();
+      for (const id of this.events.stopRunning()) void this.events.abortSession(id);
+    }
     this.conn.notify('session/cancel', { sessionId: this.sessionId });
   }
 
@@ -462,6 +528,7 @@ class OpenCodeSession implements AgentSession {
     if (!proc) return;
     this.mcp?.stop();
     this.mcp = undefined;
+    this.events?.stop();
     if (this.deps.spawn) {
       try {
         proc.kill('SIGTERM');

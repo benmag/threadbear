@@ -310,6 +310,7 @@ export function cursorToolIdentity(update: Any, threadbear: Set<string>, cwd: st
   if (!name) {
     const fromTitle = /^(Read|Edit|Write|Bash|Grep|Glob|LS|Delete|WebFetch|WebSearch|end_turn)\b/i.exec(titleIn);
     if (fromTitle) name = fromTitle[1];
+    else if (/^task$/i.test(titleIn) || (typeof input.subagent_type === 'string' && typeof input.prompt === 'string')) name = 'Task'; // OpenCode's helper tool, reported as kind think
     else if (/end[_ ]?turn/i.test(`${titleIn} ${given}`)) name = 'end_turn';
     else if (acpKind === 'command' || typeof input.command === 'string') name = 'Bash';
     else if (acpKind === 'read') name = 'Read';
