@@ -28,7 +28,7 @@ const TOOL_KIND: Record<string, ToolKind> = {
 };
 
 type OpenText = { itemId: string; kind: 'assistant.text' | 'reasoning'; text: string };
-type OpenTool = { name: string; title: string; input: Record<string, unknown>; kind: ToolKind; emitted: boolean };
+type OpenTool = { name: string; title: string; input: Record<string, unknown>; kind: ToolKind; emitted: boolean; live?: string };
 
 export type CursorNormalizerOptions = {
   // Threadbear tool names, so a call of one is `mcp__threadbear__<name>`
@@ -188,7 +188,7 @@ export class CursorNormalizer {
     const name = named.name || prev?.name || 'tool';
     const kind = named.kind !== 'other' ? named.kind : prev?.kind || named.kind;
     const title = named.title || prev?.title || toolTitle(name, input, this.ctx.cwd);
-    const tool: OpenTool = { name: name || prev?.name || 'tool', title, input, kind, emitted: prev?.emitted ?? false };
+    const tool: OpenTool = { name: name || prev?.name || 'tool', title, input, kind, emitted: prev?.emitted ?? false, live: prev?.live };
     const status = typeof update.status === 'string' ? update.status : fresh ? 'pending' : '';
     if (!tool.emitted && (fresh || status === 'in_progress' || status === 'completed' || status === 'failed')) {
       this.emitCall(id, tool, out);
@@ -203,7 +203,21 @@ export class CursorNormalizer {
       this.open.delete(id);
       return;
     }
+    this.liveOutput(id, tool, update.content, out);
     this.open.set(id, tool);
+  }
+
+  // ACP agents (OpenCode) send running output as a cumulative snapshot in
+  // each in_progress update; the app appends deltas, so send the new tail.
+  // A snapshot that doesn't extend the last (e.g. a truncated window) is
+  // skipped; the final result replaces the live text anyway.
+  private liveOutput(id: string, tool: OpenTool, content: unknown, out: AdapterOutput[]): void {
+    if (!tool.emitted || tool.kind !== 'command') return;
+    const text = contentText(content);
+    const prev = tool.live ?? '';
+    if (!text || text.length <= prev.length || !text.startsWith(prev)) return;
+    tool.live = text;
+    out.push({ kind: 'delta', delta: { type: 'tool.output.delta', itemId: id, text: text.slice(prev.length) } });
   }
 
   private emitCall(id: string, tool: OpenTool, out: AdapterOutput[]): void {

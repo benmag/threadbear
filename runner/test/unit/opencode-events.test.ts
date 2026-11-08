@@ -71,3 +71,23 @@ test("OpenCode's task call is named Task, not a generic think row", () => {
   assert.equal(later.name, 'Task');
   assert.equal(later.kind, 'task');
 });
+
+test('a helper keeps a record of its prompt, tool calls, results and replies', () => {
+  const events = load('events.ndjson');
+  const root = events.find((e) => e.type === 'message.part.updated' && e.properties.part.tool === 'task').properties.sessionID;
+  const { subs } = run('events.ndjson', root);
+  const bodies = subs.flatMap((u) => u.events ?? []);
+  assert.equal(bodies.filter((b) => b.type === 'tool.call').length, 2);
+  const result = bodies.find((b) => b.type === 'tool.result');
+  assert.ok(result && result.type === 'tool.result' && result.ok && result.text.startsWith('total'));
+  assert.equal(bodies.filter((b) => b.type === 'user.message').length, 1);
+
+  const subs2: SubagentUpdate[] = [];
+  const ev = new OpenCodeEvents({ port: 1, rootSessionId: () => 'root', onSubagent: (u) => subs2.push(u), onPermission: () => {} });
+  ev.handle({ type: 'session.created', properties: { info: { id: 'kid', parentID: 'root', title: 't' } } });
+  ev.handle({ type: 'message.updated', properties: { info: { id: 'm1', role: 'assistant' } } });
+  const text = { id: 'p1', messageID: 'm1', type: 'text', text: 'All done', time: { start: 1, end: 2 } };
+  ev.handle({ type: 'message.part.updated', properties: { sessionID: 'kid', part: text } });
+  ev.handle({ type: 'message.part.updated', properties: { sessionID: 'kid', part: text } });
+  assert.deepEqual(subs2.flatMap((u) => u.events ?? []), [{ type: 'assistant.text', itemId: 'p1', text: 'All done' }]);
+});

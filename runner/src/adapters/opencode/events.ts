@@ -9,6 +9,7 @@
 import net from 'node:net';
 import type { SubagentUpdate } from '../types.ts';
 import type { Logger } from '../../log.ts';
+import type { EventBody, ToolKind } from '../../protocol.ts';
 
 type Any = Record<string, any>;
 
@@ -35,7 +36,7 @@ export type EventsDeps = {
   fetch?: typeof fetch;
 };
 
-type Child = { id: string; parent: string; callId?: string; description?: string; tools: Set<string>; status: 'running' | 'completed' | 'failed' | 'stopped' };
+type Child = { id: string; parent: string; callId?: string; description?: string; tools: Set<string>; called: Set<string>; texts: Set<string>; prompted?: boolean; prompt?: string; status: 'running' | 'completed' | 'failed' | 'stopped' };
 
 export async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -54,6 +55,7 @@ export class OpenCodeEvents {
   private stopped = false;
   private abort?: AbortController;
   private lastEventAt = 0;
+  private roles = new Map<string, string>();
 
   constructor(deps: EventsDeps) {
     this.deps = deps;
@@ -150,8 +152,17 @@ export class OpenCodeEvents {
         this.adopt(info.id, info.parentID, typeof info.title === 'string' ? info.title : undefined);
         return;
       }
+      case 'message.updated': {
+        const info: Any = props.info ?? {};
+        if (typeof info.id === 'string' && typeof info.role === 'string') this.roles.set(info.id, info.role);
+        return;
+      }
       case 'message.part.updated': {
         const part: Any = props.part ?? {};
+        if (part.type === 'text' && typeof props.sessionID === 'string') {
+          this.childText(props.sessionID, part);
+          return;
+        }
         if (part.type !== 'tool' || typeof props.sessionID !== 'string') return;
         if (!this.known(props.sessionID)) return;
         if (part.tool === 'task') this.taskPart(props.sessionID, part);
@@ -181,7 +192,7 @@ export class OpenCodeEvents {
   private adopt(id: string, parent: string, title?: string): Child {
     let c = this.children.get(id);
     if (!c) {
-      c = { id, parent, tools: new Set(), status: 'running', ...(title ? { description: title } : {}) };
+      c = { id, parent, tools: new Set(), called: new Set(), texts: new Set(), status: 'running', ...(title ? { description: title } : {}) };
       this.children.set(id, c);
       this.deps.onSubagent({ id, started: true, status: 'running', ...(title ? { description: title } : {}) });
     }
@@ -215,7 +226,24 @@ export class OpenCodeEvents {
       if (typeof state.error === 'string') update.summary = state.error.slice(0, 500);
     } else update.status = 'running';
     update.toolUses = child.tools.size;
+    if (!child.prompted && typeof input.prompt === 'string' && input.prompt) {
+      child.prompted = true;
+      child.prompt = input.prompt.trim();
+      update.events = [{ type: 'user.message', text: input.prompt, images: [] }];
+    }
     this.deps.onSubagent(update);
+  }
+
+  // What the helper said: its finished text parts, once each. The helper's own
+  // brief arrives as a text part too: skipped by role, or by matching it.
+  private childText(sessionId: string, part: Any): void {
+    const child = this.children.get(sessionId);
+    if (!child || typeof part.id !== 'string' || child.texts.has(part.id)) return;
+    if (this.roles.get(part.messageID) === 'user' || part.synthetic || !part.time?.end) return;
+    const text = typeof part.text === 'string' ? part.text.trim() : '';
+    if (!text || text === child.prompt) return;
+    child.texts.add(part.id);
+    this.deps.onSubagent({ id: child.id, events: [{ type: 'assistant.text', itemId: part.id, text }] });
   }
 
   private childTool(sessionId: string, part: Any): void {
@@ -228,7 +256,24 @@ export class OpenCodeEvents {
     const verb = typeof part.tool === 'string' ? part.tool : 'tool';
     const done = state.status === 'completed' || state.status === 'error';
     const activity = `${done ? 'Finished' : 'Running'} ${verb}${detail ? `: ${detail.replace(/\s+/g, ' ').slice(0, 120)}` : ''}`;
-    this.deps.onSubagent({ id: child.id, activity, toolUses: child.tools.size });
+    const events: EventBody[] = [];
+    if (!child.called.has(part.callID) && (state.status === 'running' || done)) {
+      child.called.add(part.callID);
+      events.push({
+        type: 'tool.call',
+        itemId: part.callID,
+        name: verb,
+        kind: TOOL_KINDS[verb] ?? 'other',
+        title: (typeof state.title === 'string' && state.title) || detail || verb,
+        input: toolInput(input),
+      });
+    }
+    if (done && !child.called.has(`done:${part.callID}`)) {
+      child.called.add(`done:${part.callID}`);
+      const raw = state.status === 'error' ? state.error : state.output;
+      events.push({ type: 'tool.result', itemId: part.callID, ok: state.status === 'completed', text: typeof raw === 'string' ? raw.slice(0, 20_000) : '', truncated: typeof raw === 'string' && raw.length > 20_000, images: [] });
+    }
+    this.deps.onSubagent({ id: child.id, activity, toolUses: child.tools.size, ...(events.length ? { events } : {}) });
   }
 
   // Marks helpers still running as stopped (after an interrupt).
@@ -266,6 +311,15 @@ export class OpenCodeEvents {
       // already gone
     }
   }
+}
+
+const TOOL_KINDS: Record<string, ToolKind> = { bash: 'command', read: 'read', edit: 'edit', write: 'write', patch: 'edit', glob: 'search', grep: 'search', list: 'search', webfetch: 'web', websearch: 'web', todowrite: 'todo', task: 'task' };
+
+// OpenCode names the path filePath; the app reads file_path.
+function toolInput(input: Any): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...input };
+  if (typeof out.filePath === 'string' && out.file_path === undefined) out.file_path = out.filePath;
+  return out;
 }
 
 // The task tool wraps the helper's answer as <task_result>...</task_result>.

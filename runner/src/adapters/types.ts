@@ -163,6 +163,9 @@ export type SubagentUpdate = {
   activity?: string;
   summary?: string;
   toolUses?: number;
+  // Transcript events to append to this sub-agent's record, for CLIs that
+  // keep no transcript file of a helper (OpenCode). Read back by threads.subagent.
+  events?: EventBody[];
 };
 
 export type ToolApprovalRequest = {

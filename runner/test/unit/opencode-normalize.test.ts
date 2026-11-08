@@ -125,3 +125,22 @@ test('tool names and effort', () => {
   assert.equal(effortNote(undefined, false), undefined);
   assert.deepEqual(commandsOf([{ name: 'compact', description: 'Shorter' }]), [{ name: 'compact', description: 'Shorter', source: 'cli' }]);
 });
+
+test('running bash snapshots stream as output deltas, only the new tail', () => {
+  const root = tmpDir('tb-cursor-live-');
+  const n = new CursorNormalizer(fileContext(path.join(root, 'proj'), path.join(root, 'media'), path.join(root, 'blobs')));
+  n.begin('turn-1');
+  const snap = (text: string) => ({
+    sessionUpdate: 'tool_call_update',
+    toolCallId: 'b1',
+    status: 'in_progress',
+    kind: 'execute',
+    rawInput: { command: 'npm test' },
+    content: [{ type: 'content', content: { type: 'text', text } }],
+  });
+  const outs: AdapterOutput[] = [];
+  outs.push(...n.handleUpdate({ sessionUpdate: 'tool_call', toolCallId: 'b1', status: 'pending', kind: 'execute', title: 'npm test', rawInput: { command: 'npm test' } }));
+  for (const t of ['one\n', 'one\n', 'one\ntwo\n']) outs.push(...n.handleUpdate(snap(t)));
+  const deltas = outs.flatMap((o) => (o.kind === 'delta' && o.delta.type === 'tool.output.delta' ? [o.delta.text] : []));
+  assert.deepEqual(deltas, ['one\n', 'two\n']);
+});

@@ -1353,6 +1353,20 @@ export class Runner {
   subagent(threadId: string, subagentId: string): { subagent?: Subagent; events: PersistedEvent[] } {
     const { rec } = this.mustGet(threadId);
     const known = rec.subagents?.find((a) => a.id === subagentId);
+    const own = this.subagentFile(threadId, subagentId);
+    if (own && fs.existsSync(own)) {
+      const events: PersistedEvent[] = [];
+      for (const line of fs.readFileSync(own, 'utf8').split('\n')) {
+        if (!line) continue;
+        try {
+          const { ts, body } = JSON.parse(line) as { ts: string; body: EventBody };
+          events.push({ seq: events.length + 1, ts, threadId, ...body } as PersistedEvent);
+        } catch {
+          // a line still being written
+        }
+      }
+      return known ? { subagent: publicSubagent(known), events } : { events };
+    }
     const cwd = known?.cwd ?? rec.cwd;
     const account = this.accounts.get(known?.accountId ?? rec.accountId);
     const sessionId = known?.sessionId ?? rec.nativeSessionId;
@@ -3158,6 +3172,24 @@ export class Runner {
   // --------------------------------------------------------------- helpers
 
   // A sub-agent started or changed (AdapterOutput 'subagent').
+  // A sub-agent's record kept by the runner, for CLIs that write none (OpenCode).
+  private subagentFile(threadId: string, subagentId: string): string | null {
+    if (!/^[0-9a-zA-Z_-]+$/.test(subagentId)) return null;
+    return path.join(this.store.threadDir(threadId), 'subagents', `${subagentId}.ndjson`);
+  }
+
+  private appendSubagentEvents(threadId: string, subagentId: string, events: EventBody[]): void {
+    const file = this.subagentFile(threadId, subagentId);
+    if (!file) return;
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const ts = this.isoNow();
+      fs.appendFileSync(file, events.map((body) => JSON.stringify({ ts, body })).join('\n') + '\n');
+    } catch (e) {
+      this.log?.warn('sub-agent record not written', { error: String(e) });
+    }
+  }
+
   updateSubagent(st: ThreadState, u: SubagentUpdate): void {
     const { rec } = st;
     const list = (rec.subagents ??= []);
@@ -3174,6 +3206,7 @@ export class Runner {
         list.splice(i >= 0 ? i : 0, 1);
       }
     }
+    if (u.events?.length) this.appendSubagentEvents(rec.id, u.id, u.events);
     if (u.itemId) a.itemId = u.itemId;
     if (u.parentId) a.parentId = u.parentId;
     if (u.description) a.description = u.description;
