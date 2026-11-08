@@ -42,9 +42,22 @@ export function pickOpenCodeSmallModel(models: ModelChoice[], chosen?: string): 
 }
 
 export function readOpenCodeReply(stdout: string, stderr: string, code: number | null): CliResponse {
-  const text = stdout.replace(/\u001b\[[0-9;]*m/g, '').trim();
+  // `--format json` prints one event per line; the reply is the text parts.
+  let text = '';
+  let errMsg = '';
+  for (const line of stdout.split('\n')) {
+    if (!line.startsWith('{')) continue;
+    try {
+      const ev = JSON.parse(line) as { type?: string; part?: { text?: string }; error?: { data?: { message?: string }; name?: string } };
+      if (ev.type === 'text' && ev.part?.text) text += ev.part.text;
+      else if (ev.type === 'error') errMsg = ev.error?.data?.message ?? ev.error?.name ?? 'error';
+    } catch {
+      // not an event
+    }
+  }
+  text = text.trim();
   if (text && code === 0) return { ok: true, text };
-  const why = (stderr.trim() || text).split('\n').pop()?.slice(0, 200);
+  const why = (errMsg || stderr.trim() || stdout.trim()).split('\n').pop()?.slice(0, 200);
   return { ok: false, timedOut: false, limit: LIMIT.test(`${stderr}\n${stdout}`), message: why ? `opencode: ${why}` : `opencode exited ${code ?? 'on a signal'} with no answer` };
 }
 
@@ -58,7 +71,7 @@ export function askOpenCode(req: OpenCodeCall): Promise<CliResponse> {
     const prompt = openCodePrompt(req.system, req.user, req.jsonSchema);
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(req.bin, ['run', '-m', openCodeCliModelId(req.model), '--format', 'text', prompt], { cwd: req.cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+      child = spawn(req.bin, ['run', '-m', openCodeCliModelId(req.model), '--format', 'json', prompt], { cwd: req.cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     } catch (e) {
       resolve({ ok: false, timedOut: false, limit: false, message: `Couldn't start OpenCode: ${(e as Error).message}` });
       return;
