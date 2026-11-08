@@ -202,6 +202,8 @@ private struct ModelPill: View {
             } label: {
                 pill
             }
+            // A menu's label takes the accent otherwise, and only Send should have it.
+            .tint(.secondary)
             .accessibilityLabel("Model: \(title)")
         } else {
             pill
