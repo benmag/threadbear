@@ -187,6 +187,10 @@ final class AppModel {
         }
     }
 
+/// Whether the composer's model picker can change a thread's model
+/// (backend API 64, phone:update with a model).
+var canChangeModel: Bool { isFake || (apiVersion ?? 0) >= BackendCompatibility.modelChangeAPIVersion }
+
     /// The thread's own runner by name while it's offline. Not offlineText,
     /// which only speaks up once every runner is: with Bruce and the cloud
     /// box always up, a message to the sleeping M5 just said "Sending…".
@@ -222,9 +226,21 @@ final class AppModel {
     /// The models a new thread can start on; empty hides the pickers, as an
     /// older backend would turn an effort down.
     /// The models a new thread on this runner can start on (nil: any runner's).
-    func newThreadModels(on runnerId: String?) -> [PhoneModelChoice] {
-        isFake || (apiVersion ?? 0) >= BackendCompatibility.modelsAPIVersion ? NewThreadChoices.models(accounts, runnerId: runnerId) : []
-    }
+func newThreadModels(on runnerId: String?) -> [PhoneModelChoice] {
+    isFake || (apiVersion ?? 0) >= BackendCompatibility.modelsAPIVersion ? NewThreadChoices.models(accounts, runnerId: runnerId) : []
+}
+
+/// The models an open thread's picker offers: its own provider's, on its
+/// runner. Another provider's model would move the thread's login, which
+/// the phone doesn't do from here.
+func threadModels(for thread: PhoneThread) -> [PhoneModelChoice] {
+    guard isFake || (apiVersion ?? 0) >= BackendCompatibility.modelsAPIVersion else { return [] }
+    let provider = thread.provider.isEmpty ? "claude" : thread.provider
+    return NewThreadChoices.models(accounts.filter {
+        ($0.provider.isEmpty ? "claude" : $0.provider) == provider
+            && ($0.runnerId == nil || $0.runnerId == thread.runnerId)
+    })
+}
 
     /// Whether there's a runner to choose (backend API 56, which lists them
     /// in Mike's order and keeps one he sets).

@@ -702,6 +702,7 @@ public final class FakeBackend: Backend, @unchecked Sendable {
             case let .star(on):
                 let starredAt = s.threadsById[threadId]?.starredAt
                 s.threadsById[threadId]?.starredAt = on ? (starredAt ?? .now) : nil
+            case let .model(model): s.threadsById[threadId]?.model = model
             }
         }
         return newCommand()

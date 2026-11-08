@@ -289,4 +289,8 @@
 //    weren't queued, and sync:pruneFiles any left after a day. A runner
 //    sends pictures to another runner only from 63: an older backend would
 //    drop them and send the words alone.
-export const API_VERSION = 63;
+// 64: phone:update takes `model` (or null for the runner's own default),
+//    the reply box's model picker, so an open thread's model can be changed
+//    from the phone. A phone sends it only to a backend of 64 or later; an
+//    older runner fails it as "nothing to change".
+export const API_VERSION = 64;

@@ -770,6 +770,23 @@ test('an archive command an agent sent (by: "agent") says an agent archived it; 
   assert.ok(h.runner.get(b.id).archivedAt);
 });
 
+test('commands: an update from the phone can set a thread\'s model, or clear it back to the default', async () => {
+const { h, sync, push } = setupFull();
+sync.start();
+await sync.flushNow();
+const t = h.runner.create({ text: 'one', cwd: h.cfg.defaults.cwd, accountId: 'claude-3' }).thread;
+const s = session(h, t.id);
+s.init();
+s.result('completed');
+await tick();
+push([{ commandId: 'mm1', kind: 'update', threadId: t.id, args: { model: 'haiku' }, createdAt: 1 }]);
+await tick(10);
+assert.equal(h.runner.get(t.id).model, 'haiku');
+push([{ commandId: 'mm2', kind: 'update', threadId: t.id, args: { model: null }, createdAt: 2 }]);
+await tick(10);
+assert.equal(h.runner.get(t.id).model ?? null, null);
+});
+
 test('commands: each pending one is taken once, applied through the runner as from the phone, and finished', async () => {
   const { h, sync, calls, push, applied } = setupFull();
   sync.start();

@@ -129,7 +129,7 @@ export type SyncConfig = {
 // lower one means its backend hasn't been deployed since this runner was:
 // said in runner.status, tb status and the log rather than stopping, since
 // the runner only adds to what it sends while the number stays the same.
-export const BACKEND_API_VERSION = 63;
+export const BACKEND_API_VERSION = 64;
 // From this one sync:sharedThreads lists a runner's rows shared by link, which
 // it checks against its own threads on every start and every
 // SHARE_RECONCILE_MS (reconcileShares).
@@ -530,7 +530,7 @@ export type CommandHost = {
   send(threadId: string, text: string, images: ImageRef[], opts: { origin?: 'phone'; answers?: AskAnswer[] }): unknown;
   respondApproval(p: { threadId: string; approvalId: string; decision: ApprovalDecision; message?: string; answers?: Record<string, string>; remote?: boolean }): unknown;
   answerSecret(p: { threadId: string; approvalId: string; secret?: string; decline?: boolean }): unknown;
-  update(p: { threadId: string; title?: string; snoozedUntil?: string | null; archived?: boolean; verdict?: ArchiveVerdict; starred?: boolean }): unknown;
+  update(p: { threadId: string; title?: string; snoozedUntil?: string | null; archived?: boolean; verdict?: ArchiveVerdict; starred?: boolean; model?: string | null }): unknown;
   // Hibernate in Mike's words (threads.hibernateWhen): a `snooze: { said }` update from the main Mac.
   hibernateWhen?(p: { threadId: string; said: string }): unknown;
   // Seen up to the last event it has.
@@ -3873,6 +3873,9 @@ export class ConvexSync {
         else if (a.markSeen) await host.markSeen(id);
         else if (typeof a.star === 'boolean') await host.update({ threadId: id, starred: a.star });
         else if (typeof a.title === 'string') await host.update({ threadId: id, title: a.title });
+        // The reply box's model picker (backend API 64): a model id, or null
+        // for the runner's own default.
+        else if (a.model === null || typeof a.model === 'string') await host.update({ threadId: id, model: a.model as string | null });
         else throw new Error('nothing to change');
         return undefined;
       }

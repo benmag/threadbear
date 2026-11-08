@@ -891,6 +891,11 @@ public enum BackendCompatibility {
     /// palette; what's typed still runs as a command.
     public static let slashCommandsAPIVersion = 62
 
+/// From 64 phone:update takes a `model` (or null for the runner's own
+/// default), so the composer's picker can change an open thread's model.
+/// Older backends reject it, so the phone shows no picker.
+public static let modelChangeAPIVersion = 64
+
     /// The line to show, or nil when the backend is fine.
     public static func problem(_ identity: PhoneIdentity) -> String? {
         let version = identity.apiVersion ?? 0
@@ -974,20 +979,24 @@ public enum ThreadChange: Sendable, Hashable {
     case archiveWithVerdict(ArchiveVerdict)
     case unarchive
     case markSeen
-    case rename(String)
-    case star(Bool)
+case rename(String)
+case star(Bool)
+/// The thread's model (backend API 61): nil is the runner's own default,
+/// as the composer's picker's "Auto".
+case model(String?)
 
-    var json: JSONValue {
-        switch self {
-        case let .snooze(until): ["snooze": ["until": .string(ISODate.string(until))]]
-        case .snoozeUntilRestart: ["snooze": ["untilRestart": true]]
-        case .wake: ["wake": true]
-        case .archive: ["archive": true]
-        case let .archiveWithVerdict(verdict): ["archive": true, "verdict": .string(verdict.rawValue)]
-        case .unarchive: ["unarchive": true]
-        case .markSeen: ["markSeen": true]
-        case let .rename(title): ["title": .string(title)]
-        case let .star(on): ["star": .bool(on)]
-        }
-    }
+var json: JSONValue {
+switch self {
+case let .snooze(until): ["snooze": ["until": .string(ISODate.string(until))]]
+case .snoozeUntilRestart: ["snooze": ["untilRestart": true]]
+case .wake: ["wake": true]
+case .archive: ["archive": true]
+case let .archiveWithVerdict(verdict): ["archive": true, "verdict": .string(verdict.rawValue)]
+case .unarchive: ["unarchive": true]
+case .markSeen: ["markSeen": true]
+case let .rename(title): ["title": .string(title)]
+case let .star(on): ["star": .bool(on)]
+case let .model(model): ["model": JSONValue(model)]
+}
+}
 }

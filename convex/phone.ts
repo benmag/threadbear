@@ -767,9 +767,12 @@ export const update = mutation({
       v.object({ archive: v.literal(true), verdict: v.optional(v.union(v.literal('worked'), v.literal('didntWork'), v.literal('notNeeded'))) }),
       v.object({ unarchive: v.literal(true) }),
       v.object({ markSeen: v.literal(true) }),
-      v.object({ title: v.string() }),
-      v.object({ star: v.boolean() }),
-    ),
+        v.object({ title: v.string() }),
+        v.object({ star: v.boolean() }),
+        // The composer's model picker: the thread's model, or null for the
+        // runner's own default ("Auto"). API 64.
+        v.object({ model: v.union(v.string(), v.null()) }),
+      ),
   },
   returns: v.id('commands'),
   handler: async (ctx, { token, threadId, change }) => {

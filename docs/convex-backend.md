@@ -632,8 +632,10 @@ phone names must be one that has heartbeated (or `"any"`), else
   (docs/protocol.md, "Secrets"). `sealed` is dropped from the command
   once the runner has finished it.
 - `phone:update({ token, threadId, change })` where `change` is one of
-  `{ snooze: { until?, untilRestart? } }`, `{ wake: true }`, `{ archive:
-  true }`, `{ unarchive: true }`, `{ markSeen: true }`, `{ title }`.
+`{ snooze: { until?, untilRestart? } }`, `{ wake: true }`, `{ archive:
+true }`, `{ unarchive: true }`, `{ markSeen: true }`, `{ title }`, or
+`{ model }` (API 64; null for the runner's own default), the composer's
+model picker.
 - `phone:setRunnerOrder({ token, runnerIds })` (API 56): Mike's order for
   his runners, from the phone's Settings (or the Mac's, through its runner:
   `sync:runnerOrder` and `sync:setRunnerOrder`, API 58, the owner key only), at most 50 ids, kept in the one
