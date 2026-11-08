@@ -40,6 +40,10 @@ export class CursorNormalizer {
   private ctx: NormalizerContext;
   private tools: Set<string>;
   private n = 0;
+  // Item ids must not repeat across sessions: a runner restart rebuilds this
+  // and the transcript treats a repeated id as an update to the old row, so
+  // the new turn's messages landed in earlier turns (8 Nov 2026).
+  private readonly salt = Date.now().toString(36);
   private texts = new Map<string, OpenText>();
   private open = new Map<string, OpenTool>();
   private commands: SlashCommand[] = [];
@@ -163,7 +167,7 @@ export class CursorNormalizer {
     const key = typeof update.messageId === 'string' && update.messageId ? update.messageId : kind;
     let cur = this.texts.get(key);
     if (!cur) {
-      cur = { itemId: `c${++this.n}`, kind, text: '' };
+      cur = { itemId: `c${this.salt}.${++this.n}`, kind, text: '' };
       this.texts.set(key, cur);
     }
     cur.text += text;
