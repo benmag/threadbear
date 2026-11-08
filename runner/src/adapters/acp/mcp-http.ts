@@ -110,7 +110,7 @@ async function handleMcp(msg: Record<string, unknown>, tools: Map<string, ToolDe
       const tool = tools.get(name);
       if (!tool) return ok(id, { content: [{ type: 'text', text: `No threadbear tool called ${name}.` }], isError: true });
       const args = params.arguments && typeof params.arguments === 'object' && !Array.isArray(params.arguments) ? params.arguments : {};
-      const parsed = z.object(tool.inputSchema as Record<string, z.ZodType>).safeParse(args);
+      const parsed = objectOf(tool).safeParse(args);
       if (!parsed.success) return ok(id, { content: [{ type: 'text', text: z.prettifyError(parsed.error) }], isError: true });
       const result = await tool.handler(parsed.data, {});
       const content = Array.isArray(result?.content) ? result.content : [{ type: 'text', text: '' }];
@@ -130,8 +130,15 @@ function err(id: number | string, code: number, message: string): unknown {
   return { jsonrpc: '2.0', id, error: { code, message } };
 }
 
+// A tool's inputSchema is a raw shape, or (end_turn, which accepts either
+// form of its reply) an object schema already.
+function objectOf(t: ToolDefinition): z.ZodType {
+  const s = t.inputSchema as unknown;
+  return s && typeof s === 'object' && '_zod' in s ? (s as z.ZodType) : z.object(s as Record<string, z.ZodType>);
+}
+
 function jsonSchema(t: ToolDefinition): Record<string, unknown> {
-  const schema = z.toJSONSchema(z.object(t.inputSchema as Record<string, z.ZodType>)) as Record<string, unknown>;
+  const schema = z.toJSONSchema(objectOf(t)) as Record<string, unknown>;
   delete schema.$schema;
   return schema;
 }
