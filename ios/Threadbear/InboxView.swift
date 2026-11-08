@@ -47,7 +47,15 @@ struct InboxView: View {
     /// bear reads it, so a pull redraws the bear and not the whole list.
     @State private var pull = PullState()
 
-    private var pocketValue: String {
+    /// Where the search field lives: in the bottom toolbar on iOS 26, as
+/// the design puts it, and under the title on iOS 18, which has no
+/// bottom search.
+private var searchPlacement: SearchFieldPlacement {
+if #available(iOS 26.0, *) { return .toolbar }
+return .navigationBarDrawer(displayMode: .always)
+}
+
+private var pocketValue: String {
         let count = model.pocket.count
         guard count > 0 else { return "Empty" }
         return "\(count) \(count == 1 ? "card" : "cards")\(model.pocketHasNew ? ", new since you last looked" : "")"
@@ -94,12 +102,14 @@ struct InboxView: View {
             // empty section would leave.
             .listSectionSpacing(0)
             .navigationTitle("Threadbear")
-            // As it sits anyway with the search field always showing. A large
-            // title also grew out of it on a pull, over the bear peeking up.
-            .navigationBarTitleDisplayMode(.inline)
-            // Always showing, rather than tucked under the title until you
-            // pull down: on the phone it's the quickest way to an old thread.
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always))
+// As it sits anyway with the search field always showing. A large
+// title also grew out of it on a pull, over the bear peeking up.
+.navigationBarTitleDisplayMode(.inline)
+// In the bottom toolbar, beside the new thread button: on iOS 26
+// search sits there natively, so the field is always within thumb
+// reach rather than tucked under the title at the top. iOS 18 has no
+// bottom search, so there it stays under the title.
+.searchable(text: $query, placement: searchPlacement)
             // The phone has only the newest 100 archived threads, so Convex
             // looks through the rest, once typing pauses.
             .task(id: query) {
@@ -150,11 +160,15 @@ struct InboxView: View {
                             .accessibilityLabel("Ask")
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { composing = true } label: { Image(systemName: "square.and.pencil") }
-                        .accessibilityLabel("New thread")
-                }
-            }
+if #available(iOS 26.0, *) {
+DefaultToolbarItem(kind: .search, placement: .bottomBar)
+ToolbarSpacer(.flexible, placement: .bottomBar)
+}
+ToolbarItem(placement: .bottomBar) {
+Button { composing = true } label: { Image(systemName: "square.and.pencil") }
+.accessibilityLabel("New thread")
+}
+}
             .fullScreenCover(isPresented: $pocketOpen, onDismiss: {
                 // Only once the cover has gone: nothing else can present
                 // or push while it's still up.
